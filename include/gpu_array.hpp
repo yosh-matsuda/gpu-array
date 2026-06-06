@@ -430,7 +430,9 @@ namespace gpu_array
                 assert(size_ == 0 || ((ptr != nullptr) && ...));
             }
             __host__ explicit base(std::size_t size)
-                : size_(static_cast<size_type>(size)), ref_count_(size_ == 0 ? nullptr : new std::uint32_t(1))
+                : size_(static_cast<size_type>(size)),
+                  data_(static_cast<ValueTypes*>(nullptr)...),
+                  ref_count_(size_ == 0 ? nullptr : new std::uint32_t(1))
             {
                 // check range size overflow
                 if (std::numeric_limits<size_type>::max() < size)
