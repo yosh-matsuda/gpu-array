@@ -53,6 +53,6 @@ endif()
 
 # test
 if(GPU_ARRAY_BUILD_TEST)
-  enable_testing()
+  include(CTest)
   add_subdirectory(test)
 endif()

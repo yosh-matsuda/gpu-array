@@ -112,6 +112,8 @@ find_package(GTest REQUIRED)
 file(GLOB TEST_SOURCES CONFIGURE_DEPENDS test_*.cpp)
 add_executable("${PROJECT_NAME}_test" ${TEST_SOURCES})
 set_source_files_properties(${TEST_SOURCES} PROPERTIES LANGUAGE ${GPU_LANGUAGE})
+target_compile_definitions("${PROJECT_NAME}_test"
+                           PRIVATE $<$<CONFIG:Debug>:GPU_ARRAY_DEBUG>)
 target_link_libraries("${PROJECT_NAME}_test"
                       PRIVATE ${PROJECT_NAME} GTest::gtest GTest::gtest_main)
 

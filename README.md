@@ -16,6 +16,7 @@ Maximum GPU performance with Modern C++ syntax.
 *   C++20 Integration:
     *   Compatible with modern standards, including ranges and iterator concepts even for GPU kernel code.
     *   Range adapters for grid-stride access patterns (e.g., block-thread, grid-thread, grid-block, etc.).
+    *   GPU-ready range views for indexing (`views::enumerate`) and lock-step traversal (`views::zip`).
 *   Dual backend:
     *   Support for NVIDIA CUDA and AMD HIP.
 *   Header-only library and no external dependencies.
@@ -176,6 +177,28 @@ void example()
 }
 ```
 
+The view adapters can also be composed with `views::enumerate` and `views::zip`. Use `views::enumerate` when the original index is part of the computation, and `views::zip` when multiple ranges should be traversed in lock step. Apply stride adapters after these sized views to distribute the resulting elements across GPU threads.
+
+```cpp
+// Use indices inside a grid-stride loop
+__global__ void kernel_with_index(managed_array<int> array)
+{
+    for (auto&& [i, v] : array | views::enumerate | views::grid_thread_stride)
+    {
+        v += static_cast<int>(i);
+    }
+}
+
+// Traverse two arrays together; iteration stops at the shorter size
+__global__ void add_kernel(managed_array<int> lhs, managed_array<int> rhs)
+{
+    for (auto&& [x, y] : views::zip(lhs, rhs) | views::grid_thread_stride)
+    {
+        x += y;
+    }
+}
+```
+
 ### Example: AoS and SoA
 
 gpu-array supports both Array of structures (AoS) and Structure of arrays (SoA) for memory layout optimization via `array` and `structure_of_arrays` classes, respectively. The memory layout comparison between `array` (AoS) and `structure_of_arrays` (SoA) is as follows:
@@ -190,6 +213,7 @@ gpu-array supports both Array of structures (AoS) and Structure of arrays (SoA) 
 
 using namespace gpu_array;
 
+// gpu_array::tuple is a lightweight std::tuple-like type for GPU device code.
 // gpu_array::tuple (or std::tuple) or its derived struct can be used as structure type
 // The below example shows a tuple-derived struct with three members and their accessors
 template <typename... Ts>
@@ -197,6 +221,7 @@ requires (sizeof...(Ts) == 3)
 struct CustomTuple : public tuple<Ts...>
 {
     using tuple<Ts...>::tuple;
+    using tuple<Ts...>::operator=;
     __host__ __device__ auto& get_a() { return get<0>(*this); }
     __host__ __device__ auto& get_b() { return get<1>(*this); }
     __host__ __device__ auto& get_c() { return get<2>(*this); }
@@ -204,7 +229,7 @@ struct CustomTuple : public tuple<Ts...>
 using Struct = CustomTuple<int, float, double>;
 
 // Example kernel: process both AoS and SoA
-template <std::ranges::input_range T>
+template <typename T>
 __global__ void kernel_example(T array)
 {
     for (auto&& v : array | views::grid_thread_stride)
@@ -224,10 +249,12 @@ void example()
     // Array of structures (AoS): single array for entire structure
     auto aos = managed_array<Struct>(vec);
     kernel_example<<<1, 32>>>(aos);
+    api::gpuDeviceSynchronize();
 
     // Structure of arrays (SoA): multiple arrays for each member internally
     auto soa = managed_structure_of_arrays<Struct>(vec);
     kernel_example<<<1, 32>>>(soa);
+    api::gpuDeviceSynchronize();
 }
 ```
 
@@ -237,7 +264,7 @@ void example()
 ### Example: Jagged array
 
 gpu-array provides `jagged_array` class to manage multi-dimensional array with varying row lengths, using a **single memory allocation to maximize coalescing access**.
-This behaves like a wrapper for `managed_array` or `managed_jagged_array` with multi-dimensional indexing. The `jagged_array` is constructed from a 1-D array with sizes or multi-dimensional container (e.g., `std::vector<std::vector<T>>`).
+This behaves like a wrapper for `managed_array` or `managed_structure_of_arrays` with multi-dimensional indexing. The `jagged_array` is constructed from a 1-D array with sizes or multi-dimensional container (e.g., `std::vector<std::vector<T>>`).
 
 The logical and physical data layout of `jagged_array` is as follows:
 
@@ -400,6 +427,12 @@ Define `ENABLE_HIP` macro to use HIP backend. By default, CUDA backend is used. 
 
 ## Reference
 
+### `gpu_array::tuple`
+
+`gpu_array::tuple` is a lightweight tuple implementation intended for GPU device code. It provides a `std::tuple`-like interface, including `gpu_array::get`, `gpu_array::apply`, and `std::tuple_size` / `std::tuple_element` support, and is designed to be used as a device-friendly drop-in replacement for `std::tuple` in gpu-array APIs.
+
+Prefer `gpu_array::tuple` for tuple-like values that need to be used inside CUDA/HIP kernels. `std::tuple` can also be used with APIs such as `structure_of_arrays` when the backend standard library supports the required tuple operations in device code.
+
 ### `array` / `managed_array`
 
 ```cpp
@@ -411,7 +444,15 @@ template <typename T, typename size_type = size_type_default>
 class managed_array;
 ```
 
-The `array` and `managed_array` classes provide smart pointer-like wrappers for managing arrays on the GPU. They support C++20 ranges and iterator concepts, allowing seamless integration with modern C++ code and exporting to/from range-based containers.  The managed variant uses unified memory for easy access from both host and device. The non-managed variant allocates memory on the device using `cudaMalloc/hipMalloc` and `cudaMemcpy/hipMemcpy` for data transfer, which requires the type `T` to be trivially copyable for safety.
+The `array` and `managed_array` classes provide smart pointer-like wrappers for managing arrays on the GPU. They support C++20 ranges and iterator concepts, allowing seamless integration with modern C++ code and exporting to/from range-based containers. The managed variant uses unified memory for easy access from both host and device. The non-managed variant allocates memory on the device using `cudaMalloc/hipMalloc` and `cudaMemcpy/hipMemcpy` for data transfer, which requires the type `T` to be trivially copyable for safety.
+
+Key semantics:
+
+*   `array<T>` stores device-only memory. Host code can create, copy, reset, and convert it with `to<>()`, but direct element access through `operator[]`, iterators, `front`, `back`, or `data()` is intended for device code. Use `to<Container>()` to inspect values on the host.
+*   `managed_array<T>` stores unified memory. Its elements can be accessed directly from both host and device code, and it can hold non-trivially-copyable C++ objects because elements are constructed and destroyed individually.
+*   Copying an `array` or `managed_array` wrapper is shallow: the copy shares the same allocation and increments the internal use count. Use `to<array<U>>()` or `to<managed_array<U>>()` when an explicit copy of the data is required.
+*   Empty arrays have size `0`, a null data pointer, and convert to `false` in boolean contexts.
+*   Nested host ranges such as `std::vector<std::vector<T>>` are represented as nested `managed_array` values. Conceptually, class template argument deduction maps `std::vector<std::vector<int>>` to `managed_array<managed_array<int>>`; the exact size types follow `size_type_default` and the `GPU_USE_32BIT_SIZE_TYPE_DEFAULT` macro.
 
 #### Constructors
 
@@ -452,12 +493,14 @@ __device__ managed_array(T* device_ptr, size_type n);
 Where:
 
 1.  Default constructor creates an empty array with null pointer.
-2.  Copy and move constructors for copying pointer and size.
-3.  Constructors with size allocate memory on the GPU. Optionally, an initial value or [default initialization](https://en.cppreference.com/w/cpp/language/default_initialization.html).
+2.  Copy and move constructors copy the wrapper state, not the data. The resulting wrappers share the same allocation.
+3.  Constructors with size allocate memory on the GPU. Without an explicit tag, elements are value-initialized. Passing an initial value copies that value into each element. Passing `default_init` performs default initialization instead.
 4.  Constructors from ranges copy data from host containers to device memory. Copying from `array` and `managed_array` types is not allowed to avoid unintended device-to-device copies. Use `to<>()` method for explicit device-to-device copy instead.
 5.  Constructors from raw device pointers wrap existing device memory.
 
 For nested ranges, nested `managed_array` is deduced: `std::vector<std::vector<T>> -> managed_array<managed_array<T>>`.
+
+For `array<T>`, `T` must be trivially copyable. For `managed_array<T>`, `T` does not need to be trivially copyable, but it must be usable from whichever execution space accesses it. If a `managed_array<T>` is accessed from device code, the operations used by the kernel must be device-callable.
 
 #### Exporters
 
@@ -483,8 +526,8 @@ __host__ explicit operator Container() const;
 
 Where:
 
-1.  `to<Constainer>()` copies data from device to host container (e.g., `std::vector<T>`, `std::list<T>`). Range value type can be deduced automatically (e.g., `to<std::vector>()`). For nested ranges, nested containers are deduced only for `managed_array`, (e.g., `managed_array<managed_array<U>>::to<std::vector> -> std::vector<std::vector<U>>`).
-2.  `to<array<U>>()` and `to<managed_array<U>>()` copy data from device array to another gpu-array array type with element type `U`.
+1.  `to<Container>()` copies data from device to host container (e.g., `std::vector<T>`, `std::list<T>`). Range value type can be deduced automatically (e.g., `to<std::vector>()`). For fixed-size containers such as `std::array`, the requested size must match the array size. For nested ranges, nested containers are deduced only for `managed_array`, (e.g., `managed_array<managed_array<U>>::to<std::vector> -> std::vector<std::vector<U>>`).
+2.  `to<array<U>>()` and `to<managed_array<U>>()` copy data from device array to another gpu-array array type with element type `U`. The element type may change if each value is convertible to `U`.
 3.  Explicit conversion operator to host container, equivalent to `to<Container>()`, but conversion to gpu-array types are not supported.
 
 #### Range interface
@@ -566,6 +609,13 @@ std::ranges::common_range<managed_array<T>>;
 std::ranges::viewable_range<managed_array<T>>;
 ```
 
+`array` and `managed_array` model contiguous, sized, random-access ranges. They also model `std::ranges::view` because the wrapper is a lightweight handle to GPU memory. `std::ranges::borrowed_range` is enabled only for device code; host code should treat iterators from these wrappers as tied to the wrapper lifetime.
+
+Host access rules:
+
+*   `array<T>` element accessors and iterators expose device memory. They are available so the same wrapper can be used in kernels, but host code should use `to<>()` instead of dereferencing them.
+*   `managed_array<T>` element accessors and iterators can be used directly on the host, including range-based for loops, reverse iterators, `front`, and `back`.
+
 #### Smart pointer interface
 
 ```cpp
@@ -589,33 +639,39 @@ Where:
 
 Note: The device-side `reset` function does not affect to the memory management on the host side. It only changes the internal pointer and size on the device side.
 
+Calling `reset()` on one shared wrapper releases that wrapper's ownership and makes it empty. Other wrappers that share the same allocation remain valid until their ownership is released. Raw-pointer constructors are intended for wrapping existing GPU allocations; the wrapper then participates in the same RAII/use-count machinery as other array objects.
+
 #### Memory management
 
 Note: Memory management functions are only available for `managed_array` since they use unified memory.
 
 ```cpp
 // (1) Prefetch
-__host__ void prefetch(size_type start_idx, size_type len, int device_id = current_device_id, api::gpuStream_t stream = 0, bool recursive = true) const;
-__host__ void prefetch(int device_id = current_device_id, api::gpuStream_t stream = 0, bool recursive = true) const;
+__host__ void prefetch(size_type start_idx, size_type len, int device_id, api::gpuStream_t stream = 0, bool recursive = true) const;
+__host__ void prefetch(size_type start_idx, size_type len, api::gpuStream_t stream = 0, bool recursive = true) const;
+__host__ void prefetch(int device_id, api::gpuStream_t stream = 0, bool recursive = true) const;
+__host__ void prefetch(api::gpuStream_t stream = 0, bool recursive = true) const;
 
 // (2) Prefetch to host memory
 __host__ void prefetch_to_cpu(size_type start_idx, size_type len, api::gpuStream_t stream = 0, bool recursive = true) const;
 __host__ void prefetch_to_cpu(api::gpuStream_t stream = 0, bool recursive = true) const;
 
 // (3) Memory advice
-__host__ void mem_advise(size_type n, size_type len, api::gpuMemoryAdvise advise, int device_id = current_device_id, bool recursive = true) const;
-__host__ void mem_advise(api::gpuMemoryAdvise advise, int device_id = current_device_id, bool recursive = true) const;
+__host__ void mem_advise(size_type n, size_type len, api::gpuMemoryAdvise advise, int device_id, bool recursive = true) const;
+__host__ void mem_advise(size_type n, size_type len, api::gpuMemoryAdvise advise, bool recursive = true) const;
+__host__ void mem_advise(api::gpuMemoryAdvise advise, int device_id, bool recursive = true) const;
+__host__ void mem_advise(api::gpuMemoryAdvise advise, bool recursive = true) const;
 
 // (4) Memory advice to host memory
-__host__ void mem_advise(size_type n, size_type len, api::gpuMemoryAdvise advise, bool recursive = true) const;
-__host__ void mem_advise(api::gpuMemoryAdvise advise, bool recursive = true) const;
+__host__ void mem_advise_to_cpu(size_type n, size_type len, api::gpuMemoryAdvise advise, bool recursive = true) const;
+__host__ void mem_advise_to_cpu(api::gpuMemoryAdvise advise, bool recursive = true) const;
 ```
 
 Where:
 
-1.  Wrapper for `cudaMemPrefetchAsync/hipMemPrefetchAsync` to prefetch unified memory to specified device. The former overload prefetches a memory range, while the latter overload prefetches the entire memory. If `recursive` is true and the value type of the array has `prefetch(...)` function, prefetch is called recursively for nested or member arrays.
+1.  Wrapper for `cudaMemPrefetchAsync/hipMemPrefetchAsync` to prefetch unified memory to specified device. The former overload prefetches a memory range, while the latter overload prefetches the entire memory. Overloads without `device_id` use the current device. If `recursive` is true and the value type of the array has `prefetch(...)` function, prefetch is called recursively for nested or member arrays.
 2.  Host memory prefetching overloads with similar behavior to (1).
-3.  Wrapper for `cudaMemAdvise/hipMemAdvise` to set memory advice for unified memory. The former overload sets advice for a memory range, while the latter overload sets advice for the entire memory. If `recursive` is true and the value type of the array has `mem_advise(...)` function, mem_advise is called recursively for nested or member arrays.
+3.  Wrapper for `cudaMemAdvise/hipMemAdvise` to set memory advice for unified memory. The former overload sets advice for a memory range, while the latter overload sets advice for the entire memory. Overloads without `device_id` use the current device. If `recursive` is true and the value type of the array has `mem_advise(...)` function, mem_advise is called recursively for nested or member arrays.
 4.  Host memory advice overloads with similar behavior to (3).
 
 ### `value` / `managed_value`
@@ -629,7 +685,15 @@ template <typename T>
 class managed_value;
 ```
 
-The `value` and `managed_value` classes provide smart pointer-like wrappers for managing single values on the GPU. They allow seamless integration and exporting to/from host values. The managed variant uses unified memory for easy access from both host and device. The non-managed variant allocates memory on the device using `cudaMalloc/hipMalloc` and `cudaMemcpy/hipMemcpy` for data transfer, which requires the type `T` to be trivially copyable for safety.
+The `value` and `managed_value` classes provide smart pointer-like wrappers for managing single values on the GPU. The managed variant uses unified memory for easy access from both host and device. The non-managed variant allocates memory on the device using `cudaMalloc/hipMalloc` and `cudaMemcpy/hipMemcpy` for data transfer, which requires the type `T` to be trivially copyable for safety.
+
+Key semantics:
+
+*   `value<T>` stores device-only memory. Host code can read a copy of the stored value with `operator*()` or the host `operator->()` proxy, but host dereference does not provide mutable access to device memory.
+*   `managed_value<T>` stores unified memory. Host and device code can directly dereference it and mutate the object through `operator*()` or `operator->()`.
+*   Copying a `value` or `managed_value` wrapper is shallow: the copy shares the same allocation and increments the internal use count.
+*   Empty values have a null pointer and convert to `false` in boolean contexts.
+*   Raw-pointer constructors wrap an existing GPU allocation and transfer ownership to the wrapper's RAII/use-count machinery.
 
 #### Constructors
 
@@ -657,17 +721,19 @@ template <typename... Args>
 __host__ explicit managed_value(Args&&... args);
 
 // (5) construct from raw pointer (device pointer)
-__host__ __device__ array(T* device_ptr);
-__host__ __device__ managed_array(T* device_ptr);
+__host__ __device__ value(T* device_ptr);
+__host__ __device__ managed_value(T* device_ptr);
 ```
 
 Where:
 
 1.  Default constructor creates an empty value with null pointer.
-2.  Copy and move constructors for copying pointer.
-3.  Constructors with initial value or [default initialization](https://en.cppreference.com/w/cpp/language/default_initialization.html).
+2.  Copy and move constructors copy the wrapper state, not the data. The resulting wrappers share the same allocation.
+3.  Constructors with initial value or [default initialization](https://en.cppreference.com/w/cpp/language/default_initialization.html). For trivial types, `default_init` leaves the stored value default-initialized rather than value-initialized.
 4.  Constructors that forward arguments to construct the element in-place. The arguments are perfectly forwarded to the constructor of `T`.
-5.  Constructors from raw device pointers wrap existing device memory.
+5.  Constructors from raw device pointers wrap existing device memory. `value<T>` expects device memory and `managed_value<T>` expects managed memory.
+
+For `value<T>`, `T` must be trivially copyable. For `managed_value<T>`, `T` does not need to be trivially copyable, but it must be usable from whichever execution space accesses it.
 
 Note: The device-side `reset` function does not affect to the memory management on the host side. It only changes the internal pointer and size on the device side.
 
@@ -708,7 +774,7 @@ __host__ std::uint32_t use_count() const noexcept;
 
 Where:
 
-1.  Dereference and member access operators for `value`. Note that dereference operator is only available in device code, while member access operator returns a proxy object in host code to access copy of the value.
+1.  Dereference and member access operators for `value`. In host code, `operator*()` returns a copy transferred from device memory, and `operator->()` returns a proxy object that points to a copy of the value. In device code, these operators access the device object directly.
 2.  Dereference and member access operators for `managed_value`, available in both host and device code.
 3.  Get the raw device pointer.
 4.  If host code calls `reset(...)`, the current device memory is freed and set new device pointer. If device code calls `reset(...)`, it only sets the internal pointer without freeing memory.
@@ -723,13 +789,15 @@ Note: Memory management functions are only available for `managed_value` since t
 
 ```cpp
 // (1) Prefetch
-__host__ void prefetch(int device_id = current_device_id, api::gpuStream_t stream = 0, bool recursive = true) const;
+__host__ void prefetch(int device_id, api::gpuStream_t stream = 0, bool recursive = true) const;
+__host__ void prefetch(api::gpuStream_t stream = 0, bool recursive = true) const;
 
 // (2) Prefetch to host memory
 __host__ void prefetch_to_cpu(api::gpuStream_t stream = 0, bool recursive = true) const;
 
 // (3) Memory advice
-__host__ void mem_advise(api::gpuMemoryAdvise advise, int device_id = current_device_id, bool recursive = true) const;
+__host__ void mem_advise(api::gpuMemoryAdvise advise, int device_id, bool recursive = true) const;
+__host__ void mem_advise(api::gpuMemoryAdvise advise, bool recursive = true) const;
 
 // (4) Memory advice to host memory
 __host__ void mem_advise_to_cpu(api::gpuMemoryAdvise advise, bool recursive = true) const;
@@ -737,41 +805,44 @@ __host__ void mem_advise_to_cpu(api::gpuMemoryAdvise advise, bool recursive = tr
 
 Where:
 
-1.  Wrapper for `cudaMemPrefetchAsync/hipMemPrefetchAsync` to prefetch unified memory to specified device. If `recursive` is true and the value type has `prefetch(...)` function, prefetch is called recursively for member arrays.
+1.  Wrapper for `cudaMemPrefetchAsync/hipMemPrefetchAsync` to prefetch unified memory to specified device. The overload without `device_id` uses the current device. If `recursive` is true and the value type has `prefetch(int, api::gpuStream_t)` function, prefetch is called recursively for the stored object.
 2.  Host memory prefetching overload with similar behavior to (1).
-3.  Wrapper for `cudaMemAdvise/hipMemAdvise` to set memory advice for unified memory. If `recursive` is true and the value type has `mem_advise(...)` function, mem_advise is called recursively for member arrays.
+3.  Wrapper for `cudaMemAdvise/hipMemAdvise` to set memory advice for unified memory. The overload without `device_id` uses the current device. If `recursive` is true and the value type has `mem_advise(api::gpuMemoryAdvise, int)` function, mem_advise is called recursively for the stored object.
 4.  Host memory advice overload with similar behavior to (3).
 
 ### `structure_of_arrays` / `managed_structure_of_arrays`
 
 ```cpp
 template <typename... Ts>
-using structure_of_arrays<Ts...> = structure_of_arrays<std::tuple<Ts...>>;
-template <template <typename...> typename Tuple = std::tuple, typename... Ts, typename SizeType = size_type_default>
+class structure_of_arrays;  // value_type is gpu_array::tuple<Ts...>
+template <template <typename...> typename Tuple, typename... Ts, typename SizeType = size_type_default>
 class structure_of_arrays<Tuple<Ts...>, SizeType>;
 
 
 template <typename... Ts>
-using managed_structure_of_arrays<Ts...> = managed_structure_of_arrays<std::tuple<Ts...>>;
-template <template <typename...> typename Tuple = std::tuple, typename... Ts, typename SizeType = size_type_default>
+class managed_structure_of_arrays;  // value_type is gpu_array::tuple<Ts...>
+template <template <typename...> typename Tuple, typename... Ts, typename SizeType = size_type_default>
 class managed_structure_of_arrays<Tuple<Ts...>, SizeType>;
 ```
 
 The `structure_of_arrays` and `managed_structure_of_arrays` classes provide smart pointer-like wrappers for managing Structure-of-Arrays (SoA) memory layout on the GPU. They allow for optimized memory access patterns by storing each member of a structure in separate contiguous arrays. The index access interface allows retrieval of the entire structure at a given index. This class is useful for maximizing coalesced memory access on GPUs. These classes support C++20 ranges and iterator concepts.
 
-The value type of `structure_of_arrays` must be tuple-derived template class that inherits from `std::tuple<Ts...>` or is itself. The example definition of such tuple-derived class is as follows:
+The value type of `structure_of_arrays<Ts...>` is `gpu_array::tuple<Ts...>`. If a structure-like accessor interface is desired, the value type can also be `gpu_array::tuple<Ts...>`, `std::tuple<Ts...>`, or a tuple-like class template derived from one of them. The tuple-like type must be constructible as `Tuple<Ts...>`, `Tuple<Ts&...>`, and `Tuple<const Ts&...>`, and each element must be accessible with `get<N>(value)` found by unqualified lookup. The example definition of such tuple-derived class is as follows:
 
 ```cpp
 template <typename... Ts>
 requires (sizeof...(Ts) == 3)
-struct CustomTuple : public std::tuple<Ts...>
+struct CustomTuple : public gpu_array::tuple<Ts...>
 {
-    using std::tuple<Ts...>::tuple;
-    __host__ __device__ auto& get_a() { return std::get<0>(*this); }
-    __host__ __device__ auto& get_b() { return std::get<1>(*this); }
-    __host__ __device__ auto& get_c() { return std::get<2>(*this); }
+    using gpu_array::tuple<Ts...>::tuple;
+    using gpu_array::tuple<Ts...>::operator=;
+    __host__ __device__ decltype(auto) get_a() { return gpu_array::get<0>(*this); }
+    __host__ __device__ decltype(auto) get_b() { return gpu_array::get<1>(*this); }
+    __host__ __device__ decltype(auto) get_c() { return gpu_array::get<2>(*this); }
 };
 ```
+
+The same pattern can be used with `std::tuple<Ts...>` and `std::get` in host/device environments where the standard library tuple implementation is available in device code.
 
 The template parameters `Ts...` correspond to the member types of the tuple-derived class. All parameters must be value types (i.e., not reference types), since the members are stored in separate arrays and returns by tuple of reference types of each element when accessed.
 
@@ -786,7 +857,7 @@ managed_structure_of_arrays();
 __host__ __device__ structure_of_arrays(const structure_of_arrays& other);
 __host__ __device__ structure_of_arrays(structure_of_arrays&& other) noexcept;
 __host__ __device__ managed_structure_of_arrays(const managed_structure_of_arrays& other);
-__host__ __device__ managed_structure_of_arrays(managed_structure_of_arrays&& other) noexcept
+__host__ __device__ managed_structure_of_arrays(managed_structure_of_arrays&& other) noexcept;
 
 // (3) construct with size
 __host__ explicit structure_of_arrays(std::size_t n);
@@ -797,18 +868,22 @@ __host__ managed_structure_of_arrays(std::size_t n, const Tuple<Ts...>& init_val
 __host__ managed_structure_of_arrays(std::size_t n, default_init_tag default_init);
 
 // (4) construct from range of tuple-derived class
-template <std::ranges::input_range Range>
+template <std::ranges::forward_range Range>
+requires std::ranges::sized_range<Range>
 __host__ explicit structure_of_arrays(const Range& range);
-template <std::ranges::input_range Range>
+template <std::ranges::forward_range Range>
+requires std::ranges::sized_range<Range>
 __host__ explicit managed_structure_of_arrays(const Range& range);
 __host__ structure_of_arrays(std::initializer_list<Tuple<Ts...>> list);
 __host__ managed_structure_of_arrays(std::initializer_list<Tuple<Ts...>> list);
 
 // (5) construct from multiple ranges
-template <std::ranges::input_range... Ranges>
+template <std::ranges::forward_range... Ranges>
+requires (std::ranges::sized_range<Ranges> && ...)
 __host__ explicit structure_of_arrays(const Ranges& ranges...);
 __host__ explicit structure_of_arrays(std::initializer_list<Ts>... lists);
-template <std::ranges::input_range... Ranges>
+template <std::ranges::forward_range... Ranges>
+requires (std::ranges::sized_range<Ranges> && ...)
 __host__ explicit managed_structure_of_arrays(const Ranges& ranges...);
 __host__ explicit managed_structure_of_arrays(std::initializer_list<Ts>... lists);
 ```
@@ -818,8 +893,8 @@ Where:
 1.  Default constructor creates an empty structure_of_arrays with null pointers.
 2.  Copy and move constructors for copying pointers and size.
 3.  Constructors with size allocate memory on the GPU. Optionally, an initial value or [default initialization](https://en.cppreference.com/w/cpp/language/default_initialization.html).
-4.  Constructors from ranges of tuple-derived class copy data from host containers to device memory. Copying from `structure_of_arrays` and `managed_structure_of_arrays` types is not allowed to avoid unintended device-to-device copies.
-5.  Constructors from multiple ranges copy data from each host container to corresponding member arrays on the device.
+4.  Constructors from ranges of tuple-derived class copy data from host containers to device memory. The range must be a sized forward range because each tuple field is copied by a separate pass over the source range. Copying from `structure_of_arrays` is not allowed to avoid unintended device-to-device copies; copying from `managed_structure_of_arrays` is allowed because it is host-accessible unified memory.
+5.  Constructors from multiple sized forward ranges copy data from each host container to corresponding member arrays on the device.
 
 #### Exporters
 
@@ -837,7 +912,7 @@ __host__ explicit operator Container() const;
 
 Where:
 
-1.  `to<Constainer>()` copies data from device to host container (e.g., `std::vector<Tuple<Ts...>>`, `std::list<Tuple<Ts...>>`). Range value type can be deduced automatically (e.g., `to<std::vector>() -> std::vector<Tuple<Ts...>>`).
+1.  `to<Container>()` copies data from device to host container (e.g., `std::vector<Tuple<Ts...>>`, `std::list<Tuple<Ts...>>`). Range value type can be deduced automatically (e.g., `to<std::vector>() -> std::vector<Tuple<Ts...>>`).
 2.  Explicit conversion operator to host container, equivalent to `to<Container>()`.
 
 #### Range interface
@@ -856,13 +931,14 @@ managed_structure_of_arrays::element_type;
 
 Member functions:
 
-```cpp
-using value = Tuple<Ts...>;
-using reference = Tuple<Ts&...>;
-using const_reference = Tuple<const Ts&...>;
-using iterator = ...;
-using const_iterator = ...;
+Return type notation used below:
 
+*   `value` means `Tuple<Ts...>`.
+*   `reference` means `Tuple<Ts&...>`.
+*   `const_reference` means `Tuple<const Ts&...>`.
+*   `iterator` and `const_iterator` mean random-access iterators whose reference types are `reference` and `const_reference`.
+
+```cpp
 __host__ __device__ reference operator[](size_type index) &;
 __host__ __device__ const_reference operator[](size_type index) const&;
 __host__ __device__ value operator[](size_type index) &&;
@@ -871,9 +947,9 @@ __host__ __device__ const_iterator begin() const noexcept;
 __host__ __device__ iterator end() noexcept;
 __host__ __device__ const_iterator end() const noexcept;
 template <std::size_t N>
-__host__ __device__ Ts[N]* data() noexcept;
+__host__ __device__ element_type<N>* data() noexcept;
 template <std::size_t N>
-__host__ __device__ const Ts[N]* data() const noexcept;
+__host__ __device__ const element_type<N>* data() const noexcept;
 __host__ __device__ size_type size() const noexcept;
 __host__ __device__ bool empty() const noexcept;
 ```
@@ -909,9 +985,18 @@ std::ranges::common_range<managed_soa_type>;
 std::ranges::viewable_range<managed_soa_type>;
 ```
 
-Note: When you define your own tuple-derived class, you may need to specialize `std::common_type` and `std::basic_common_reference` to satisfy some range concepts. For example:
+Note: `std::tuple<Ts...>` and `gpu_array::tuple<Ts...>` already provide the common-reference machinery needed by the standard range concepts. When you define your own tuple-derived class and use it as the element type of `structure_of_arrays` or `managed_structure_of_arrays`, you may need to inherit the base tuple assignment operator and specialize `std::common_type` and `std::basic_common_reference`. This is required when the SoA range is checked against concepts such as `std::ranges::input_range`, `std::ranges::forward_range`, or `std::ranges::random_access_range`, and when it is passed to sized range views such as `views::enumerate` or `views::zip`.
+
+The specializations are not needed for `array<CustomTuple<...>>`, `managed_array<CustomTuple<...>>`, or simple SoA kernels that only use `views::grid_thread_stride` without constraining the kernel parameter as a standard range. Inheriting assignment is especially important when algorithms assign `Tuple<Ts...>` values through `Tuple<Ts&...>` references. For example:
 
 ```cpp
+template <typename... Ts>
+struct CustomTuple : public gpu_array::tuple<Ts...>
+{
+    using gpu_array::tuple<Ts...>::tuple;
+    using gpu_array::tuple<Ts...>::operator=;
+};
+
 template <class... TTypes, class... UTypes>
 requires requires { typename CustomTuple<std::common_type_t<TTypes, UTypes>...>; }
 struct std::common_type<CustomTuple<TTypes...>, CustomTuple<UTypes...>>
@@ -960,39 +1045,41 @@ Note: Memory management functions are only available for `managed_structure_of_a
 
 ```cpp
 // (1) Prefetch
-__host__ void prefetch(size_type start_idx, size_type len, int device_id = current_device_id, api::gpuStream_t stream = 0, bool recursive = true) const;
-__host__ void prefetch(int device_id = current_device_id, api::gpuStream_t stream = 0, bool recursive = true) const;
+__host__ void prefetch(size_type start_idx, size_type len, int device_id, api::gpuStream_t stream = 0, bool recursive = true) const;
+__host__ void prefetch(size_type start_idx, size_type len, api::gpuStream_t stream = 0, bool recursive = true) const;
+__host__ void prefetch(int device_id, api::gpuStream_t stream = 0, bool recursive = true) const;
+__host__ void prefetch(api::gpuStream_t stream = 0, bool recursive = true) const;
 
 // (2) Prefetch to host memory
 __host__ void prefetch_to_cpu(size_type start_idx, size_type len, api::gpuStream_t stream = 0, bool recursive = true) const;
 __host__ void prefetch_to_cpu(api::gpuStream_t stream = 0, bool recursive = true) const;
 
 // (3) Memory advice
-__host__ void mem_advise(size_type n, size_type len, api::gpuMemoryAdvise advise, int device_id = current_device_id, bool recursive = true) const;
-__host__ void mem_advise(api::gpuMemoryAdvise advise, int device_id = current_device_id, bool recursive = true) const;
+__host__ void mem_advise(size_type n, size_type len, api::gpuMemoryAdvise advise, int device_id, bool recursive = true) const;
+__host__ void mem_advise(size_type n, size_type len, api::gpuMemoryAdvise advise, bool recursive = true) const;
+__host__ void mem_advise(api::gpuMemoryAdvise advise, int device_id, bool recursive = true) const;
+__host__ void mem_advise(api::gpuMemoryAdvise advise, bool recursive = true) const;
 
 // (4) Memory advice to host memory
-__host__ void mem_advise(size_type n, size_type len, api::gpuMemoryAdvise advise, bool recursive = true) const;
-__host__ void mem_advise(api::gpuMemoryAdvise advise, bool recursive = true) const;
+__host__ void mem_advise_to_cpu(size_type n, size_type len, api::gpuMemoryAdvise advise, bool recursive = true) const;
+__host__ void mem_advise_to_cpu(api::gpuMemoryAdvise advise, bool recursive = true) const;
 ```
 
 Where:
 
-1.  Wrapper for `cudaMemPrefetchAsync/hipMemPrefetchAsync` to prefetch unified memory to specified device. The former overload prefetches a memory range, while the latter overload prefetches the entire memory. If `recursive` is true and the value type of the array has `prefetch(...)` function, prefetch is called recursively for nested or member arrays.
+1.  Wrapper for `cudaMemPrefetchAsync/hipMemPrefetchAsync` to prefetch unified memory to specified device. The former overload prefetches a memory range, while the latter overload prefetches the entire memory. Overloads without `device_id` use the current device. If `recursive` is true and the value type of the array has `prefetch(...)` function, prefetch is called recursively for nested or member arrays.
 2.  Host memory prefetching overloads with similar behavior to (1).
-3.  Wrapper for `cudaMemAdvise/hipMemAdvise` to set memory advice for unified memory. The former overload sets advice for a memory range, while the latter overload sets advice for the entire memory. If `recursive` is true and the value type of the array has `mem_advise(...)` function, mem_advise is called recursively for nested or member arrays.
+3.  Wrapper for `cudaMemAdvise/hipMemAdvise` to set memory advice for unified memory. The former overload sets advice for a memory range, while the latter overload sets advice for the entire memory. Overloads without `device_id` use the current device. If `recursive` is true and the value type of the array has `mem_advise(...)` function, mem_advise is called recursively for nested or member arrays.
 4.  Host memory advice overloads with similar behavior to (3).
 
 ### `jagged_array`
 
 ```cpp
-template <typename T, typename SizeType = size_type_default>
-class jagged_array : public managed_array<T, SizeType>;
-template <template <typename...> typename Tuple = std::tuple, typename... Ts, typename SizeType = size_type_default>
-class jagged_array : public managed_structure_of_arrays<Tuple<Ts...>, SizeType>;
+template <gpu_managed_random_access_range ArrayType>
+class jagged_array : public ArrayType;
 ```
 
-The `jagged_array` class provides wrapper for managing multi-dimensional arrays with varying row lengths (jagged arrays) on the GPU. It inherits from the base array type, which can be either `managed_array<T>` or `structure_of_arrays<Tuple<Ts...>>`, to utilize their memory management and range interfaces. The jagged array has additional offsets to handle varying row sizes, allowing efficient access to elements using multi-dimensional indices.
+The `jagged_array` class provides wrapper for managing multi-dimensional arrays with varying row lengths (jagged arrays) on the GPU. It inherits from the base array type, which can be either `managed_array<T>` or `managed_structure_of_arrays<Tuple<Ts...>>`, to utilize their memory management and range interfaces. The jagged array has additional offsets to handle varying row sizes, allowing efficient access to elements using multi-dimensional indices.
 
 Note that the only internal storage types currently supported are `managed_array` and `managed_structure_of_arrays`.
 
@@ -1038,6 +1125,8 @@ Where:
 5.  Constructors from sizes and flat host container copy data from the provided host container to the jagged array on the device. The host container should contain the concatenated elements of all rows.
 6.  Constructors from nested host container copy data from the provided nested host container to the each row of jagged array on the device.
 
+For constructors that take row sizes and an existing flat sequence, the sum of the row sizes must match the flat sequence size; otherwise, `std::invalid_argument` is thrown. Empty rows are supported. A default-constructed `jagged_array` has `size() == 0` and `num_rows() == 0`.
+
 #### Exporters
 
 Inherited from the base array type (`managed_array` or `managed_structure_of_arrays`).
@@ -1058,6 +1147,14 @@ __host__ __device__ auto end(size_type i) noexcept;
 __host__ __device__ auto end(size_type i) const noexcept;
 __host__ __device__ auto data(size_type i) noexcept;        // if base is managed_array
 __host__ __device__ auto data(size_type i) const noexcept;  // if base is managed_array
+template <std::size_t N>
+__host__ __device__ auto* data() noexcept;                  // if base is managed_structure_of_arrays
+template <std::size_t N>
+__host__ __device__ const auto* data() const noexcept;      // if base is managed_structure_of_arrays
+template <std::size_t N>
+__host__ __device__ auto* data(size_type i) noexcept;       // if base is managed_structure_of_arrays
+template <std::size_t N>
+__host__ __device__ const auto* data(size_type i) const noexcept; // if base is managed_structure_of_arrays
 __host__ __device__ size_type size(size_type i) const noexcept;
 __host__ __device__ size_type num_rows() const noexcept;
 
@@ -1076,7 +1173,7 @@ Inherited from the base array type (`managed_array` or `managed_structure_of_arr
 
 #### Memory management
 
-Inherited from the base array type (`managed_array` or `managed_structure_of_arrays`).
+The `prefetch`, `prefetch_to_cpu`, `mem_advise`, and `mem_advise_to_cpu` member functions apply to both the inherited base storage and the internal row-offset storage. Recursive memory management is forwarded to element values when supported by the base storage type.
 
 ### Grid-stride range adapter
 
@@ -1094,6 +1191,10 @@ views::grid_cluster_stride;     // [*]
 ```
 
 They produce views that enable advancing the N-th element of the original range by a specified stride M. The pairs N and M correspond to the index of the thread/block/cluster within the block/cluster/grid and the number of threads/blocks/clusters, respectively.
+
+On the host side, these adapters fall back to a serial traversal with initial index 0 and stride 1. This makes the same range expressions usable in host-side tests, while the actual grid-stride distribution is applied only in GPU device code.
+
+The view object stores the range handle by value. Iterators obtained from the view should not outlive the view object.
 
 #### `views::block_thread_stride`
 
@@ -1244,6 +1345,50 @@ for (auto i = static_cast<decltype(array.size())>(grid.cluster_rank()); i < arra
     array[i] = ...;
 }
 ```
+
+### Enumerate view
+
+`views::enumerate` and `enumerate_view` iterate over a sized random-access range as pairs of `(index, value)`. The index starts at 0 and the value is a reference to the original element, so assignments through the structured binding update the underlying range.
+
+```cpp
+for (auto&& [i, v] : array | views::enumerate)
+{
+    v += static_cast<int>(i);
+}
+```
+
+The element type is represented with `gpu_array::tuple`, so both structured bindings and `gpu_array::get<N>` are supported.
+
+```cpp
+auto item = (array | views::enumerate)[2];
+auto i = gpu_array::get<0>(item);
+auto& v = gpu_array::get<1>(item);
+```
+
+`views::enumerate` can be composed with stride adapters when enumeration comes first. For example, `array | views::enumerate | views::grid_thread_stride` distributes enumerated `(index, value)` pairs across threads while preserving indices from the original range. The reverse order, such as `array | views::grid_thread_stride | views::enumerate`, is not supported because stride views do not model `std::ranges::sized_range`.
+
+### Zip view
+
+`views::zip` and `zip_view` iterate over multiple sized random-access ranges in lock step. The resulting view length is the minimum size of the input ranges; extra elements in longer ranges are not visited.
+
+```cpp
+for (auto&& [x, y] : views::zip(lhs, rhs))
+{
+    x += y;
+}
+```
+
+The element type is represented with `gpu_array::tuple` containing references to the original ranges. `views::zip` is a function-style adapter; construct the zip first, then compose the resulting view with other adapters when needed.
+
+```cpp
+for (auto&& [i, pair] : views::zip(lhs, rhs) | views::enumerate | views::grid_thread_stride)
+{
+    auto&& [x, y] = pair;
+    x += y * static_cast<int>(i + 1);
+}
+```
+
+Composition order controls the element shape. `views::zip(lhs, rhs) | views::enumerate` yields `(index, (lhs_value, rhs_value))`, while `views::zip(lhs | views::enumerate, rhs)` yields `((index, lhs_value), rhs_value)`. Apply stride adapters after `views::enumerate` or `views::zip`; strided views are intentionally not sized ranges, so they cannot be passed to `views::enumerate` or `views::zip`.
 
 ### Utilities
 

@@ -87,11 +87,24 @@ namespace gpu_array::api
     __host__ inline decltype(auto) gpuMemPrefetchAsync(const void* dev_ptr, std::size_t count, int device,
                                                        gpuStream_t stream = 0)
     {
+#if defined(__NVCC__) && defined(CUDA_VERSION) && CUDA_VERSION >= 13000
+        return ::hipMemPrefetchAsync_v2(
+            dev_ptr, count,
+            {.type = device == hipCpuDeviceId ? hipMemLocationTypeHost : hipMemLocationTypeDevice, .id = device}, 0,
+            stream);
+#else
         return ::hipMemPrefetchAsync(dev_ptr, count, device, stream);
+#endif
     }
     __host__ inline decltype(auto) gpuMemAdvise(const void* devPtr, size_t count, gpuMemoryAdvise advice, int device)
     {
+#if defined(__NVCC__) && defined(CUDA_VERSION) && CUDA_VERSION >= 13000
+        return ::hipMemAdvise_v2(
+            devPtr, count, static_cast<hipMemoryAdvise>(advice),
+            {.type = device == hipCpuDeviceId ? hipMemLocationTypeHost : hipMemLocationTypeDevice, .id = device});
+#else
         return ::hipMemAdvise(devPtr, count, static_cast<hipMemoryAdvise>(advice), device);
+#endif
     }
     __host__ inline decltype(auto) gpuDeviceSynchronize() { return ::hipDeviceSynchronize(); }
     __host__ inline decltype(auto) gpuGetDeviceCount(int* count) { return ::hipGetDeviceCount(count); }

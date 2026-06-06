@@ -317,6 +317,15 @@ namespace gpu_array
             template <std::size_t N>
             using element_type = std::tuple_element_t<N, gpu_array::tuple<ValueTypes...>>;
 
+            __host__ static size_type checked_size(std::size_t size)
+            {
+                if (std::numeric_limits<size_type>::max() < size)
+                {
+                    throw std::runtime_error("size overflow");
+                }
+                return static_cast<size_type>(size);
+            }
+
             __host__ __device__ void init()
             {
                 size_ = 0U;
@@ -373,6 +382,8 @@ namespace gpu_array
 
             __host__ __device__ base& operator=(const base& r)
             {
+                if (this == &r) return *this;
+
 #ifndef GPU_DEVICE_COMPILE
                 free();
 #endif
@@ -394,6 +405,8 @@ namespace gpu_array
             }
             __host__ __device__ base& operator=(base&& r) noexcept
             {
+                if (this == &r) return *this;
+
 #ifndef GPU_DEVICE_COMPILE
                 free();
 #endif
@@ -430,16 +443,10 @@ namespace gpu_array
                 assert(size_ == 0 || ((ptr != nullptr) && ...));
             }
             __host__ explicit base(std::size_t size)
-                : size_(static_cast<size_type>(size)),
+                : size_(checked_size(size)),
                   data_(static_cast<ValueTypes*>(nullptr)...),
                   ref_count_(size_ == 0 ? nullptr : new std::uint32_t(1))
             {
-                // check range size overflow
-                if (std::numeric_limits<size_type>::max() < size)
-                {
-                    throw std::runtime_error("size overflow");
-                }
-
                 // called from derived class constructor
                 (INCR_GPU_MEMORY_USAGE(sizeof(ValueTypes) * size_), ...);  // for debug
             }
@@ -494,6 +501,10 @@ namespace gpu_array
         concept gpu_managed_array_ptr = requires(Derived d) { is_managed_array_helper(d); };
         template <class Derived>
         concept gpu_unmanaged_array_ptr = requires(Derived d) { is_unmanaged_array_helper(d); };
+
+        template <class Derived>
+        concept gpu_managed_random_access_range =
+            gpu_managed_ptr<Derived> && std::ranges::random_access_range<Derived> && std::ranges::sized_range<Derived>;
 
         template <typename T>
         concept array_convertible = (!gpu_ptr<T>) && std::ranges::forward_range<T> && std::ranges::sized_range<T>;
@@ -559,6 +570,7 @@ namespace gpu_array
     using detail::gpu_array_ptr;
     using detail::gpu_managed_array_ptr;
     using detail::gpu_managed_ptr;
+    using detail::gpu_managed_random_access_range;
     using detail::gpu_ptr;
     using detail::gpu_unmanaged_array_ptr;
     using detail::gpu_unmanaged_ptr;
@@ -1089,7 +1101,7 @@ namespace gpu_array
             if constexpr (has_prefetch)
             {
                 if (recursive)
-                    for (auto i = n; i < n + len; ++i) data()[i].prefetch(device_id, stream, recursive);
+                    for (auto i = n; i < n + len; ++i) data()[i].prefetch(device_id, stream);
             }
         }
         __host__ void prefetch(size_type n, size_type len, api::gpuStream_t stream = 0, bool recursive = true) const
@@ -1103,7 +1115,7 @@ namespace gpu_array
             if constexpr (has_prefetch)
             {
                 if (recursive)
-                    for (std::size_t i = 0; i < base::size_; ++i) data()[i].prefetch(device_id, stream, recursive);
+                    for (std::size_t i = 0; i < base::size_; ++i) data()[i].prefetch(device_id, stream);
             }
         }
         __host__ void prefetch(api::gpuStream_t stream = 0, bool recursive = true) const
@@ -1130,7 +1142,7 @@ namespace gpu_array
             if constexpr (has_mem_advise)
             {
                 if (recursive)
-                    for (auto i = n; i < n + len; ++i) data()[i].mem_advise(advise, device_id, recursive);
+                    for (auto i = n; i < n + len; ++i) data()[i].mem_advise(advise, device_id);
             }
         }
         __host__ void mem_advise(size_type n, size_type len, api::gpuMemoryAdvise advise, bool recursive = true) const
@@ -1144,7 +1156,7 @@ namespace gpu_array
             if constexpr (has_mem_advise)
             {
                 if (recursive)
-                    for (std::size_t i = 0; i < base::size_; ++i) data()[i].mem_advise(advise, device_id, recursive);
+                    for (std::size_t i = 0; i < base::size_; ++i) data()[i].mem_advise(advise, device_id);
             }
         }
         __host__ void mem_advise(api::gpuMemoryAdvise advise, bool recursive = true) const
@@ -1535,7 +1547,7 @@ namespace gpu_array
             if (base::size_ == 0) return;
             GPU_CHECK_ERROR(api::gpuMemPrefetchAsync(get(), sizeof(ValueType), device_id, stream));
             if constexpr (has_prefetch)
-                if (recursive) get()->prefetch(device_id, stream, recursive);
+                if (recursive) get()->prefetch(device_id, stream);
         }
         __host__ void prefetch(api::gpuStream_t stream = 0, bool recursive = true) const
         {
@@ -1552,7 +1564,7 @@ namespace gpu_array
             if (base::size_ == 0) return;
             GPU_CHECK_ERROR(api::gpuMemAdvise(get(), sizeof(ValueType), advise, device_id));
             if constexpr (has_mem_advise)
-                if (recursive) get()->mem_advise(advise, device_id, recursive);
+                if (recursive) get()->mem_advise(advise, device_id);
         }
         __host__ void mem_advise(api::gpuMemoryAdvise advise, bool recursive = true) const
         {
@@ -1576,6 +1588,20 @@ namespace gpu_array
 
     namespace detail
     {
+        template <typename Tuple, typename... Ts>
+        constexpr bool tuple_size_matches()
+        {
+            using tuple_type = std::remove_cvref_t<Tuple>;
+            if constexpr (requires { typename std::tuple_size<tuple_type>::type; })
+            {
+                return std::tuple_size<tuple_type>::value == sizeof...(Ts);
+            }
+            else
+            {
+                return true;
+            }
+        }
+
         template <std::size_t N, typename Tuple, typename... Ts>
         constexpr bool assignable_to_tuple_helper_n()
         {
@@ -1589,7 +1615,14 @@ namespace gpu_array
         constexpr bool assignable_to_tuple_helper()
         {
             return []<std::size_t... N>(std::index_sequence<N...>) {
-                return (assignable_to_tuple_helper_n<N, Tuple, Ts...>() && ...);
+                if constexpr (tuple_size_matches<Tuple, Ts...>())
+                {
+                    return (assignable_to_tuple_helper_n<N, Tuple, Ts...>() && ...);
+                }
+                else
+                {
+                    return false;
+                }
             }(std::make_index_sequence<sizeof...(Ts)>());
         }
         template <typename Tuple, typename... Ts>
@@ -2371,7 +2404,7 @@ namespace gpu_array
                 if constexpr (has_prefetch<T>)
                 {
                     if (recursive)
-                        for (auto i = n; i < n + len; ++i) ptr[i].prefetch(device_id, stream, recursive);
+                        for (auto i = n; i < n + len; ++i) ptr[i].prefetch(device_id, stream);
                 }
             });
         }
@@ -2387,7 +2420,7 @@ namespace gpu_array
                 if constexpr (has_prefetch<T>)
                 {
                     if (recursive)
-                        for (std::size_t i = 0; i < base::size_; ++i) ptr[i].prefetch(device_id, stream, recursive);
+                        for (std::size_t i = 0; i < base::size_; ++i) ptr[i].prefetch(device_id, stream);
                 }
             });
         }
@@ -2415,7 +2448,7 @@ namespace gpu_array
                 if constexpr (has_mem_advise<T>)
                 {
                     if (recursive)
-                        for (auto i = n; i < n + len; ++i) ptr[i].mem_advise(advise, device_id, recursive);
+                        for (auto i = n; i < n + len; ++i) ptr[i].mem_advise(advise, device_id);
                 }
             });
         }
@@ -2431,7 +2464,7 @@ namespace gpu_array
                 if constexpr (has_mem_advise<T>)
                 {
                     if (recursive)
-                        for (std::size_t i = 0; i < base::size_; ++i) ptr[i].mem_advise(advise, device_id, recursive);
+                        for (std::size_t i = 0; i < base::size_; ++i) ptr[i].mem_advise(advise, device_id);
                 }
             });
         }
@@ -2545,18 +2578,24 @@ namespace gpu_array
     template <detail::array_convertible_for_copy Range>
     managed_structure_of_arrays(const Range& array) -> managed_structure_of_arrays<std::ranges::range_value_t<Range>>;
 
-    template <gpu_managed_ptr ArrayType>
+    template <gpu_managed_random_access_range ArrayType>
     class jagged_array : public ArrayType
     {
         using base = ArrayType;
+
+    public:
         using size_type = typename base::size_type;
-        using offsets_type = managed_array<size_type>;
+
+    private:
+        using offsets_type = managed_array<size_type, size_type>;
         using iterator_type = std::ranges::iterator_t<ArrayType>;
         using const_iterator_type = decltype(std::ranges::cbegin(std::declval<ArrayType&>()));
 
         offsets_type offsets_;
         static constexpr auto has_data = requires(const ArrayType& a) { a.data(); };
         static constexpr auto has_prefetch = requires(const ArrayType& a) { a.prefetch(); };
+        static constexpr auto has_mem_advise = requires(const ArrayType& a, api::gpuMemoryAdvise advise,
+                                                        int device_id) { a.mem_advise(advise, device_id); };
 
     public:
         jagged_array() = default;
@@ -2658,10 +2697,26 @@ namespace gpu_array
         using base::size;
         using base::operator[];
 
-        __host__ __device__ auto begin(size_type i) noexcept { return base::begin() + offsets_[i]; }
-        __host__ __device__ auto end(size_type i) noexcept { return base::begin() + offsets_[i + 1]; }
-        __host__ __device__ auto begin(size_type i) const noexcept { return base::begin() + offsets_[i]; }
-        __host__ __device__ auto end(size_type i) const noexcept { return base::begin() + offsets_[i + 1]; }
+        __host__ __device__ auto begin(size_type i) noexcept
+        {
+            assert(i < num_rows());
+            return base::begin() + offsets_[i];
+        }
+        __host__ __device__ auto end(size_type i) noexcept
+        {
+            assert(i < num_rows());
+            return base::begin() + offsets_[i + 1];
+        }
+        __host__ __device__ auto begin(size_type i) const noexcept
+        {
+            assert(i < num_rows());
+            return base::begin() + offsets_[i];
+        }
+        __host__ __device__ auto end(size_type i) const noexcept
+        {
+            assert(i < num_rows());
+            return base::begin() + offsets_[i + 1];
+        }
 
         __host__ __device__ auto size(size_type i) const noexcept
         {
@@ -2689,6 +2744,32 @@ namespace gpu_array
         {
             assert(i < num_rows());
             return base::data() + offsets_[i];
+        }
+        template <std::size_t N>
+        __host__ __device__ decltype(auto) data() noexcept
+        requires requires { typename base::template element_type<N>; }
+        {
+            return base::template data<N>();
+        }
+        template <std::size_t N>
+        __host__ __device__ decltype(auto) data() const noexcept
+        requires requires { typename base::template element_type<N>; }
+        {
+            return base::template data<N>();
+        }
+        template <std::size_t N>
+        __host__ __device__ auto data(size_type i) noexcept
+        requires requires { typename base::template element_type<N>; }
+        {
+            assert(i < num_rows());
+            return base::template data<N>() + offsets_[i];
+        }
+        template <std::size_t N>
+        __host__ __device__ auto data(size_type i) const noexcept
+        requires requires { typename base::template element_type<N>; }
+        {
+            assert(i < num_rows());
+            return base::template data<N>() + offsets_[i];
         }
 
         __host__ __device__ decltype(auto) operator[](std::array<size_type, 2> idx) &
@@ -2729,7 +2810,10 @@ namespace gpu_array
             return detail::subrange(begin(i), size(i));
         }
 
-        __host__ __device__ auto num_rows() const noexcept { return offsets_.size() - 1; }
+        __host__ __device__ size_type num_rows() const noexcept
+        {
+            return offsets_.size() == 0 ? size_type{0} : offsets_.size() - size_type{1};
+        }
 
         __host__ void prefetch(size_type n, size_type len, int device_id, api::gpuStream_t stream = 0,
                                bool recursive = true) const
@@ -2764,7 +2848,7 @@ namespace gpu_array
         __host__ void mem_advise(size_type n, size_type len, api::gpuMemoryAdvise advise, int device_id,
                                  bool recursive = true) const
         {
-            if constexpr (has_prefetch) base::mem_advise(n, len, advise, device_id, recursive);
+            if constexpr (has_mem_advise) base::mem_advise(n, len, advise, device_id, recursive);
             offsets_.mem_advise(advise, device_id);
         }
         __host__ void mem_advise(size_type n, size_type len, api::gpuMemoryAdvise advise, bool recursive = true) const
@@ -2773,7 +2857,7 @@ namespace gpu_array
         }
         __host__ void mem_advise(api::gpuMemoryAdvise advise, int device_id, bool recursive = true) const
         {
-            if constexpr (has_prefetch) base::mem_advise(advise, device_id, recursive);
+            if constexpr (has_mem_advise) base::mem_advise(advise, device_id, recursive);
             offsets_.mem_advise(advise, device_id);
         }
         __host__ void mem_advise(api::gpuMemoryAdvise advise, bool recursive = true) const
@@ -2805,13 +2889,13 @@ namespace gpu_array
 
     // deduction guides
     template <detail::array_convertible_for_copy Range>
-    requires gpu_managed_ptr<std::ranges::range_value_t<Range>>
+    requires gpu_managed_random_access_range<std::ranges::range_value_t<Range>>
     jagged_array(const Range& nested_array) -> jagged_array<std::ranges::range_value_t<Range>>;
     template <detail::array_convertible_for_copy Range1, detail::array_convertible_for_copy Range2>
-    requires gpu_managed_ptr<Range2>
+    requires gpu_managed_random_access_range<Range2>
     jagged_array(const Range1&, const Range2&) -> jagged_array<Range2>;
     template <detail::array_convertible_for_copy Range>
-    requires gpu_managed_ptr<Range>
+    requires gpu_managed_random_access_range<Range>
     jagged_array(std::initializer_list<size_type_default>, const Range&) -> jagged_array<Range>;
 
     namespace detail
@@ -3160,8 +3244,8 @@ namespace gpu_array
     }  // namespace detail
 
 #if !defined(ENABLE_HIP)
-    // The following three alias templates are also disabled in HIP because HIP does not support alias template argument
-    // deduction.
+    // These alias templates are disabled in HIP because HIP does not support class template argument deduction through
+    // alias templates.
     template <detail::RandomAccessRange Range>
     using block_thread_stride_view = detail::stride_view<detail::Stride::BlockThread, Range>;
     template <detail::RandomAccessRange Range>
@@ -3169,6 +3253,7 @@ namespace gpu_array
     template <detail::RandomAccessRange Range>
     using grid_block_stride_view = detail::stride_view<detail::Stride::GridBlock, Range>;
 
+#if defined(_CG_HAS_CLUSTER_GROUP)
     template <detail::RandomAccessRange Range>
     using cluster_thread_stride_view = detail::stride_view<detail::Stride::ClusterThread, Range>;
     template <detail::RandomAccessRange Range>
@@ -3176,11 +3261,12 @@ namespace gpu_array
     template <detail::RandomAccessRange Range>
     using grid_cluster_stride_view = detail::stride_view<detail::Stride::GridCluster, Range>;
 #endif
+#endif
 
     namespace views
     {
         using detail::Stride;
-#ifdef GPU_CHECK_ERROR
+#if defined(GPU_DEVICE_COMPILE)
         __device__ static constexpr detail::stride_adapter<Stride::BlockThread> block_thread_stride;
         __device__ static constexpr detail::stride_adapter<Stride::GridThread> grid_thread_stride;
         __device__ static constexpr detail::stride_adapter<Stride::GridBlock> grid_block_stride;
@@ -3394,7 +3480,7 @@ namespace gpu_array
 
     namespace views
     {
-#ifdef GPU_CHECK_ERROR
+#if defined(GPU_DEVICE_COMPILE)
         __device__ static constexpr detail::enumerate_adapter enumerate;
 #else
         inline constexpr detail::enumerate_adapter enumerate;
@@ -3570,7 +3656,7 @@ namespace gpu_array
 
     namespace views
     {
-#ifdef GPU_CHECK_ERROR
+#if defined(GPU_DEVICE_COMPILE)
         __device__ static constexpr detail::zip_adapter zip;
 #else
         inline constexpr detail::zip_adapter zip;
