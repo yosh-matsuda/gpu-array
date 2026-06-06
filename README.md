@@ -186,21 +186,20 @@ gpu-array supports both Array of structures (AoS) and Structure of arrays (SoA) 
 
 ```cpp
 #include <gpu_array.hpp>
-#include <tuple>
 #include <vector>
 
 using namespace gpu_array;
 
-// std::tuple or its derived struct can be used as structure type
+// gpu_array::tuple (or std::tuple) or its derived struct can be used as structure type
 // The below example shows a tuple-derived struct with three members and their accessors
 template <typename... Ts>
 requires (sizeof...(Ts) == 3)
-struct CustomTuple : public std::tuple<Ts...>
+struct CustomTuple : public tuple<Ts...>
 {
-    using std::tuple<Ts...>::tuple;
-    __host__ __device__ auto& get_a() { return std::get<0>(*this); }
-    __host__ __device__ auto& get_b() { return std::get<1>(*this); }
-    __host__ __device__ auto& get_c() { return std::get<2>(*this); }
+    using tuple<Ts...>::tuple;
+    __host__ __device__ auto& get_a() { return get<0>(*this); }
+    __host__ __device__ auto& get_b() { return get<1>(*this); }
+    __host__ __device__ auto& get_c() { return get<2>(*this); }
 };
 using Struct = CustomTuple<int, float, double>;
 
