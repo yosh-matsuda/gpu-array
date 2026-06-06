@@ -267,9 +267,9 @@ namespace gpu_array
 
 #if defined(GPU_ARRAY_DEBUG)
         inline std::size_t gpu_memory_usage = 0UL;
-#define INCR_GPU_MEMORY_USAGE(x) (gpu_array::api::gpu_memory_usage += (x))
-#define DECR_GPU_MEMORY_USAGE(x) (gpu_array::api::gpu_memory_usage -= (x))
-#define MEMORY_USAGE_EQ(x) (gpu_array::api::gpu_memory_usage == (x))
+#define INCR_GPU_MEMORY_USAGE(x) (::gpu_array::detail::gpu_memory_usage += (x))
+#define DECR_GPU_MEMORY_USAGE(x) (::gpu_array::detail::gpu_memory_usage -= (x))
+#define MEMORY_USAGE_EQ(x) (::gpu_array::detail::gpu_memory_usage == (x))
 #else
 #define INCR_GPU_MEMORY_USAGE(x) void(x)
 #define DECR_GPU_MEMORY_USAGE(x) void(x)
@@ -349,7 +349,8 @@ namespace gpu_array
                         base::tuple_for_each([](auto* ptr) { GPU_CHECK_ERROR(api::gpuFree(ptr)); });
                         (DECR_GPU_MEMORY_USAGE(sizeof(ValueTypes) * size_), ...);  // for debug
 
-#ifndef _CLANGD                                                                    // clangd crashes with this code
+#ifndef _CLANGD
+                        // clangd crashes with this code
                         delete ref_count_;
 #endif
                     }
