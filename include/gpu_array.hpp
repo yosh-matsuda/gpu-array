@@ -28,11 +28,11 @@
 #if !defined(GPU_DEVICE_COMPILE)
 #include <iostream>
 #include <stdexcept>
-#include <vector>
 #endif
 
 #if defined(GPU_ARRAY_DEBUG)
 #include <nameof.hpp>
+#include <vector>
 #endif
 
 #if defined(GPU_NDEBUG_DEVICE_CODE_STL)
@@ -1577,9 +1577,9 @@ namespace gpu_array
         constexpr bool assignable_to_tuple_helper_n()
         {
             return requires(const Tuple& t1, gpu_array::tuple<Ts...>& t2) {
-                gpu_array::get<N>(t1);
-                gpu_array::get<N>(t2);
-                requires std::assignable_from<decltype(gpu_array::get<N>(t2)), decltype(gpu_array::get<N>(t1))>;
+                get<N>(t1);
+                get<N>(t2);
+                requires std::assignable_from<decltype(get<N>(t2)), decltype(get<N>(t1))>;
             };
         }
         template <typename Tuple, typename... Ts>
@@ -1873,7 +1873,7 @@ namespace gpu_array
             };
 
             [this, &value, alloc_ptr]<std::size_t... N>(std::index_sequence<N...>) {
-                (alloc_ptr(gpu_array::get<N>(base::data_), gpu_array::get<N>(value)), ...);
+                (alloc_ptr(gpu_array::get<N>(base::data_), get<N>(value)), ...);  // ADL
             }(std::make_index_sequence<num_arrays>());
         }
 
@@ -1893,7 +1893,7 @@ namespace gpu_array
 
             [this, &array, alloc_ptr]<std::size_t... N>(std::index_sequence<N...>) {
                 (alloc_ptr(gpu_array::get<N>(base::data_),
-                           array | std::views::transform([](const auto& v) { return (gpu_array::get<N>(v)); })),
+                           array | std::views::transform([](const auto& v) { return (get<N>(v)); })),  // ADL
                  ...);
             }(std::make_index_sequence<num_arrays>());
         }
@@ -1912,7 +1912,7 @@ namespace gpu_array
 
             [this, &list, alloc_ptr]<std::size_t... N>(std::index_sequence<N...>) {
                 (alloc_ptr(gpu_array::get<N>(base::data_),
-                           list | std::views::transform([](const auto& v) { return (gpu_array::get<N>(v)); })),
+                           list | std::views::transform([](const auto& v) { return (get<N>(v)); })),  // ADL
                  ...);
             }(std::make_index_sequence<num_arrays>());
         }
@@ -2146,7 +2146,7 @@ namespace gpu_array
 
             [this, &alloc_ptr]<std::size_t... N>(std::index_sequence<N...>) {
                 (alloc_ptr(gpu_array::get<N>(base::data_),
-                           [](const auto& v) -> const auto& { return (gpu_array::get<N>(v)); }),
+                           [](const auto& v) -> const auto& { return (get<N>(v)); }),  // ADL
                  ...);
             }(std::make_index_sequence<num_arrays>());
         }
@@ -2243,7 +2243,7 @@ namespace gpu_array
 
             [this, &value]<std::size_t... N>(std::index_sequence<N...>) {
                 (std::ranges::uninitialized_fill_n(gpu_array::get<N>(base::data_), base::size_,
-                                                   gpu_array::get<N>(value)),
+                                                   get<N>(value)),  // ADL
                  ...);
             }(std::make_index_sequence<num_arrays>());
         }
@@ -2266,7 +2266,7 @@ namespace gpu_array
 
             [this, &alloc_ptr]<std::size_t... N>(std::index_sequence<N...>) {
                 (alloc_ptr(gpu_array::get<N>(base::data_),
-                           [](const auto& e) -> const auto& { return (gpu_array::get<N>(e)); }),
+                           [](const auto& e) -> const auto& { return (get<N>(e)); }),  // ADL
                  ...);
             }(std::make_index_sequence<num_arrays>());
         }
@@ -2288,7 +2288,7 @@ namespace gpu_array
 
             [this, &alloc_ptr]<std::size_t... N>(std::index_sequence<N...>) {
                 (alloc_ptr(gpu_array::get<N>(base::data_),
-                           [](const auto& e) -> const auto& { return (gpu_array::get<N>(e)); }),
+                           [](const auto& e) -> const auto& { return (get<N>(e)); }),  // ADL
                  ...);
             }(std::make_index_sequence<num_arrays>());
         }
