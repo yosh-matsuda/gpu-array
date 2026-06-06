@@ -4,17 +4,10 @@ project(
   VERSION 0.3.0
   LANGUAGES CXX)
 
-# check if the project is top-level
-if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
-  set(GPU_ARRAY_IS_TOPLEVEL_PROJECT ON)
-else()
-  set(GPU_ARRAY_IS_TOPLEVEL_PROJECT OFF)
-endif()
-
 # options
 option(ENABLE_HIP "Enable HIP support" OFF)
 option(GPU_ARRAY_BUILD_TEST "Build ${PROJECT_NAME} tests"
-       ${GPU_ARRAY_IS_TOPLEVEL_PROJECT})
+       ${PROJECT_IS_TOP_LEVEL})
 
 # library
 include(GNUInstallDirs)
@@ -30,7 +23,7 @@ target_include_directories(
 set_target_properties(${PROJECT_NAME} PROPERTIES VERSION ${PROJECT_VERSION})
 
 # install
-if(GPU_ARRAY_IS_TOPLEVEL_PROJECT)
+if(PROJECT_IS_TOP_LEVEL)
   install(TARGETS ${PROJECT_NAME} EXPORT ${PROJECT_NAME}_Targets)
 
   install(
