@@ -145,12 +145,12 @@ namespace gpu_array
 
         private:
             template <class... Us, std::size_t... Is>
-            static auto tuple_convert(const tuple<Us...>& t, std::index_sequence<Is...>)
+            __host__ __device__ static auto tuple_convert(const tuple<Us...>& t, std::index_sequence<Is...>)
             {
                 return tuple<Ts...>{get<Is>(t)...};
             }
             template <class... Us, std::size_t... Is>
-            static auto tuple_convert(tuple<Us...>&& t, std::index_sequence<Is...>)
+            __host__ __device__ static auto tuple_convert(tuple<Us...>&& t, std::index_sequence<Is...>)
             {
                 return tuple<Ts...>{std::move(get<Is>(t))...};
             }

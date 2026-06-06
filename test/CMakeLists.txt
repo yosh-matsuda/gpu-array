@@ -46,11 +46,15 @@ if(ENABLE_HIP)
   set(CMAKE_HIP_EXTENSIONS OFF)
   set(CMAKE_HIP_STANDARD_REQUIRED ON)
 
+  if(GPU_PLATFORM STREQUAL "NVIDIA")
+    set(ADD_CXX_FLAGS
+        "${ADD_CXX_FLAGS} -Xptxas=-v -use_fast_math --expt-relaxed-constexpr")
+    set(CMAKE_HIP_FLAGS_DEBUG "${CMAKE_HIP_FLAGS_DEBUG}")
+  endif()
+
   if(NOT CMAKE_HIP_ARCHITECTURES)
     if(GPU_PLATFORM STREQUAL "NVIDIA")
       set(CMAKE_HIP_ARCHITECTURES native)
-      set(ADD_CXX_FLAGS "${ADD_CXX_FLAGS} -Xptxas=-v -use_fast_math")
-      set(CMAKE_HIP_FLAGS_DEBUG "${CMAKE_HIP_FLAGS_DEBUG}")
     else()
       set(ADD_CXX_FLAGS
           "${ADD_CXX_FLAGS} -Rpass-analysis=kernel-resource-usage -ffast-math")
@@ -105,8 +109,9 @@ message(
 find_package(GTest REQUIRED)
 
 # executables
-add_executable("${PROJECT_NAME}_test" test.cpp)
-set_source_files_properties(test.cpp PROPERTIES LANGUAGE ${GPU_LANGUAGE})
+file(GLOB TEST_SOURCES CONFIGURE_DEPENDS test_*.cpp)
+add_executable("${PROJECT_NAME}_test" ${TEST_SOURCES})
+set_source_files_properties(${TEST_SOURCES} PROPERTIES LANGUAGE ${GPU_LANGUAGE})
 target_link_libraries("${PROJECT_NAME}_test"
                       PRIVATE ${PROJECT_NAME} GTest::gtest GTest::gtest_main)
 
