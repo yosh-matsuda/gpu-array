@@ -389,5 +389,11 @@ jobs:
           cmake "${cmake_args[@]}"
           cmake --build ${{ github.workspace }}/build --config Debug --clean-first
           cmake --build ${{ github.workspace }}/build --config Release --clean-first
-          # GitHub-hosted runners do not provide GPUs, so this workflow is build-only.
-          # Run ctest on a local or self-hosted GPU runner.
+          # GitHub-hosted runners do not provide GPUs, so runtime tests are not run here.
+          # Run the full ctest suite on a local or self-hosted GPU runner.
+
+      - name: Run PTX comparison
+        if: ${{ matrix.backend == 'cuda' }}
+        shell: bash
+        run: |
+          ctest --output-on-failure -C Debug --test-dir ${{ github.workspace }}/build -R zero_overhead_ptx

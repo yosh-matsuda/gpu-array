@@ -97,6 +97,24 @@ else()
       "${CMAKE_CUDA_FLAGS_RELWITHDEBINFO} ${ADD_CXX_FLAGS}")
 endif()
 
+if(NOT ENABLE_HIP)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  list(GET CMAKE_CUDA_ARCHITECTURES 0 GPU_ARRAY_PTX_ARCHITECTURE)
+  if(GPU_ARRAY_PTX_ARCHITECTURE MATCHES "^[0-9]+")
+    set(GPU_ARRAY_PTX_ARCHITECTURE ${CMAKE_MATCH_0})
+    add_test(
+      NAME zero_overhead_ptx
+      COMMAND
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/compare_zero_overhead_ptx.py --compiler
+        ${CMAKE_CUDA_COMPILER} --host-compiler ${CMAKE_CXX_COMPILER} --source
+        ${CMAKE_CURRENT_SOURCE_DIR}/zero_overhead_ptx.cu --include-dir
+        ${PROJECT_SOURCE_DIR}/include --output-dir
+        ${CMAKE_CURRENT_BINARY_DIR}/zero_overhead_ptx --arch
+        ${GPU_ARRAY_PTX_ARCHITECTURE})
+  endif()
+endif()
+
 # MESSAGE
 message(STATUS "ENABLE_HIP: ${ENABLE_HIP}")
 message(STATUS "GPU_PLATFORM: ${GPU_PLATFORM}")

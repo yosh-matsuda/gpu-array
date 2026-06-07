@@ -341,7 +341,7 @@ void example()
 
 ### Zero-overhead
 
-gpu-array is designed to have zero-overhead compared to traditional raw pointer usage. The following example shows equivalent kernels using raw pointers and `managed_array` as verified by PTX analysis. The generated PTX assembly code for both kernels is identical, confirming that there is no performance penalty when using gpu-array abstractions with range adapters.
+gpu-array is designed to have zero-overhead compared to traditional raw pointer usage. The following equivalent kernels are covered by a CUDA-only, release-like PTX/ptxas regression test. For these representative patterns, the normalized PTX instructions and ptxas resource usage match the raw-pointer baseline, so the tested abstractions add no extra loop-body instructions, register pressure, stack usage, or spills.
 
 ```cpp
 // Traditional raw pointer kernel
@@ -376,7 +376,7 @@ __global__ void func3(managed_array<int, std::uint32_t> arr)
 
 <details>
 
-<summary>The identical PTX assembly code (except parameters) generated for the above three kernels is as follows:</summary>
+<summary>A representative PTX assembly body generated for the above kernels is as follows:</summary>
 
 ```text
 // Function Definition: _Z5func3... (Mangled C++ name for a template function)
@@ -444,6 +444,8 @@ $L__BB2_3:
 ```
 
 </details>
+
+The automated `zero_overhead_ptx` CTest also checks `views::grid_thread_stride`, `views::enumerate`, `views::zip`, `views::zip | views::enumerate`, and `value` / `managed_value` dereference. It compares strict normalized opcode sequences where possible, and uses non-prologue opcode profiles when raw pointers and wrapper objects have different parameter-unpacking prologues.
 
 ### Tips
 
