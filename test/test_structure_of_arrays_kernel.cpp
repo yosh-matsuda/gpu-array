@@ -1,5 +1,7 @@
 #include "gpu_array.hpp"
 
+#include "constrained_kernel_launch.hpp"
+
 #include <gtest/gtest.h>
 
 #include <cstdint>
@@ -90,7 +92,7 @@ namespace
         }
     }
 
-    template <std::ranges::input_range Records>
+    template <typename Records>
     __global__ void update_grid_thread_stride_view_kernel(Records records)
     {
         for (auto&& value : records | gpu_array::views::grid_thread_stride)
@@ -101,7 +103,7 @@ namespace
         }
     }
 
-    template <std::ranges::input_range Records>
+    template <typename Records>
     __global__ void enumerate_stride_view_kernel(Records records)
     {
         for (auto&& [index, value] : records | gpu_array::views::enumerate | gpu_array::views::grid_thread_stride)
@@ -112,7 +114,7 @@ namespace
         }
     }
 
-    template <std::ranges::input_range Lhs, std::ranges::input_range Rhs>
+    template <typename Lhs, typename Rhs>
     __global__ void zip_stride_view_kernel(Lhs lhs, Rhs rhs)
     {
         for (auto&& [left, right] : gpu_array::views::zip(lhs, rhs) | gpu_array::views::grid_thread_stride)
@@ -247,7 +249,7 @@ TEST(ManagedStructureOfArraysKernel, GridThreadStrideView)
     const auto source = make_records<record>();
     auto records = gpu_array::managed_structure_of_arrays<record, std::uint32_t>(source);
 
-    update_grid_thread_stride_view_kernel<<<2, 3>>>(records);
+    gpu_array_test::launch_input_range<update_grid_thread_stride_view_kernel<decltype(records)>>({2}, {3}, records);
     synchronize();
 
     expect_records_eq(
@@ -261,7 +263,7 @@ TEST(ManagedStructureOfArraysKernel, EnumerateStrideView)
     const auto source = make_records<record>();
     auto records = gpu_array::managed_structure_of_arrays<record, std::uint32_t>(source);
 
-    enumerate_stride_view_kernel<<<2, 3>>>(records);
+    gpu_array_test::launch_input_range<enumerate_stride_view_kernel<decltype(records)>>({2}, {3}, records);
     synchronize();
 
     expect_records_eq(records.template to<std::vector>(),
@@ -277,7 +279,7 @@ TEST(ManagedStructureOfArraysKernel, ZipStrideView)
     auto rhs = gpu_array::managed_structure_of_arrays<record, std::uint32_t>(
         std::vector<record>{record{10, 10.0F, 10.0}, record{20, 20.0F, 20.0}, record{30, 30.0F, 30.0}});
 
-    zip_stride_view_kernel<<<2, 3>>>(lhs, rhs);
+    gpu_array_test::launch_input_range_pair<zip_stride_view_kernel<decltype(lhs), decltype(rhs)>>({2}, {3}, lhs, rhs);
     synchronize();
 
     expect_records_eq(lhs.template to<std::vector>(),

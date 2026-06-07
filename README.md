@@ -23,11 +23,39 @@ Maximum GPU performance with Modern C++ syntax.
 
 ### Requirements
 
-Tested with the following environments:
+gpu-array requires a C++20 compiler and either the CUDA or HIP development toolkit.
+The following toolkit/compiler combinations are supported and tested:
 
-*   CUDA 12.6.3 or later / HIP 6.2.4 or later
-    *   🆖 CUDA 12.9.X: compiler segmentation faults
-*   GCC 13 or later, Clang 16 or later
+| Backend | Toolkit | Tested Compiler |
+| --- | --- | --- |
+| CUDA | 12.6.3 | GCC 13, Clang 16-18 |
+| CUDA | 12.8.1 | GCC 13-14, Clang 16-19 |
+| CUDA | 12.9.1 | **Not Supported** |
+| CUDA | 13.0.2 | GCC 13-15, Clang 16-20 |
+| CUDA | 13.1.1 | GCC 13-15, Clang 16-21 |
+| CUDA | 13.2.0 | GCC 13-15, Clang 16-21 |
+| ROCm/HIP NVIDIA | 6.2.4 + CUDA 12.8.1 | Clang 18 |
+| ROCm/HIP NVIDIA | 6.4.4 + CUDA 12.8.1 | Clang 18 |
+| ROCm/HIP NVIDIA | 7.0.3 + CUDA 12.8.1 | Clang 18 |
+| ROCm/HIP NVIDIA | 7.1.1 + CUDA 12.8.1 | Clang 18 |
+| ROCm/HIP NVIDIA | 7.2.4 + CUDA 13.2.0 | Clang 18 |
+| ROCm/HIP AMD | 6.2.4 | AMD Clang 18 |
+| ROCm/HIP AMD | 6.4.4 | AMD Clang 19 |
+| ROCm/HIP AMD | 7.0.3 | AMD Clang 20 |
+| ROCm/HIP AMD | 7.1.1 | AMD Clang 21 |
+| ROCm/HIP AMD | 7.2.4 | AMD Clang 22 |
+
+CUDA 12.9.1 is not supported because `nvcc` 12.9 is known to segfault while compiling gpu-array tests.
+
+With ROCm/HIP, do not put `std::ranges` concept constraints directly on `__global__`
+function templates. Current ROCm compilers can reject otherwise valid constrained
+kernel launches during overload resolution. Check such constraints in an ordinary
+host wrapper and launch an unconstrained `__global__` kernel from that wrapper.
+
+The practical C++ compiler floor is GCC 13 or Clang 16. CUDA's official host
+compiler tables allow older compiler majors, but gpu-array relies on C++20
+ranges and related library support, so older compilers are outside the supported
+range.
 
 ## Quick Start
 

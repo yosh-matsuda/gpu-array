@@ -1,5 +1,7 @@
 #include "gpu_array.hpp"
 
+#include "constrained_kernel_launch.hpp"
+
 #include <gtest/gtest.h>
 
 #include <concepts>
@@ -14,7 +16,7 @@ namespace
 
     void synchronize() { GPU_CHECK_ERROR(gpu_array::api::gpuDeviceSynchronize()); }
 
-    template <std::ranges::input_range Range>
+    template <typename Range>
     __global__ void update_grid_thread_stride_kernel(Range values)
     {
         for (auto& value : values | gpu_array::views::grid_thread_stride)
@@ -23,8 +25,7 @@ namespace
         }
     }
 
-    template <std::ranges::input_range Range>
-    requires std::ranges::input_range<std::ranges::range_value_t<Range>>
+    template <typename Range>
     __global__ void update_nested_stride_kernel(Range values, int fill_value)
     {
         for (auto& row : values | gpu_array::views::grid_block_stride)
@@ -37,8 +38,7 @@ namespace
     }
 
 #if !defined(ENABLE_HIP)
-    template <std::ranges::input_range Range>
-    requires std::ranges::input_range<std::ranges::range_value_t<Range>>
+    template <typename Range>
     __global__ void update_nested_stride_alias_kernel(Range values, int fill_value)
     {
         for (auto& row : gpu_array::grid_block_stride_view(values))
@@ -51,7 +51,7 @@ namespace
     }
 #endif
 
-    template <std::ranges::input_range Range, std::ranges::input_range Output>
+    template <typename Range, typename Output>
     __global__ void enumerate_kernel(Range values, Output output)
     {
         for (auto&& [index, value] : values | gpu_array::views::enumerate)
@@ -60,8 +60,7 @@ namespace
         }
     }
 
-    template <std::ranges::input_range Range>
-    requires std::ranges::input_range<std::ranges::range_value_t<Range>>
+    template <typename Range>
     __global__ void enumerate_stride_kernel(Range values)
     {
         for (auto&& [row_index, row] : values | gpu_array::views::enumerate | gpu_array::views::grid_block_stride)
@@ -74,7 +73,7 @@ namespace
         }
     }
 
-    template <std::ranges::input_range Lhs, std::ranges::input_range Rhs>
+    template <typename Lhs, typename Rhs>
     __global__ void zip_kernel(Lhs lhs, Rhs rhs)
     {
         for (auto&& [left, right] : gpu_array::views::zip(lhs, rhs))
@@ -83,8 +82,7 @@ namespace
         }
     }
 
-    template <std::ranges::input_range Range>
-    requires std::ranges::input_range<std::ranges::range_value_t<Range>>
+    template <typename Range>
     __global__ void initialize_nested_kernel(Range values, int coefficient)
     {
         for (auto&& [row_index, row] : values | gpu_array::views::enumerate | gpu_array::views::grid_block_stride)
@@ -97,9 +95,7 @@ namespace
         }
     }
 
-    template <std::ranges::input_range Lhs, std::ranges::input_range Rhs>
-    requires std::ranges::input_range<std::ranges::range_value_t<Lhs>> &&
-             std::ranges::input_range<std::ranges::range_value_t<Rhs>>
+    template <typename Lhs, typename Rhs>
     __global__ void zip_stride_kernel(Lhs lhs, Rhs rhs)
     {
         for (auto&& [left_row, right_row] : gpu_array::views::zip(lhs, rhs) | gpu_array::views::grid_block_stride)
@@ -112,7 +108,7 @@ namespace
         }
     }
 
-    template <std::ranges::input_range Lhs, std::ranges::input_range Rhs>
+    template <typename Lhs, typename Rhs>
     __global__ void zip_enumerate_stride_kernel(Lhs lhs, Rhs rhs)
     {
         for (auto&& [index, zipped] :
@@ -123,7 +119,7 @@ namespace
         }
     }
 
-    template <std::ranges::input_range Lhs, std::ranges::input_range Rhs>
+    template <typename Lhs, typename Rhs>
     __global__ void enumerate_zip_stride_kernel(Lhs lhs, Rhs rhs)
     {
         for (auto&& [enumerated, right] :
@@ -140,7 +136,7 @@ TEST(ViewKernel, GridThreadStride)
     const auto source = std::vector<int>{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
     auto values = int_array(source);
 
-    update_grid_thread_stride_kernel<<<3, 5>>>(values);
+    gpu_array_test::launch_input_range<update_grid_thread_stride_kernel<decltype(values)>>({3}, {5}, values);
     synchronize();
 
     auto expected = source;
@@ -155,7 +151,7 @@ TEST(ViewKernel, NestedStride)
 {
     auto values = gpu_array::managed_array(std::vector(7, std::vector<int>(11, 0)));
 
-    update_nested_stride_kernel<<<3, 5>>>(values, 17);
+    gpu_array_test::launch_nested_input_range<update_nested_stride_kernel<decltype(values)>>({3}, {5}, values, 17);
     synchronize();
 
     for (const auto& row : values)
@@ -172,7 +168,8 @@ TEST(ViewKernel, StrideAliases)
 {
     auto values = gpu_array::managed_array(std::vector(5, std::vector<int>(9, 0)));
 
-    update_nested_stride_alias_kernel<<<2, 4>>>(values, 23);
+    gpu_array_test::launch_nested_input_range<update_nested_stride_alias_kernel<decltype(values)>>({2}, {4}, values,
+                                                                                                    23);
     synchronize();
 
     for (const auto& row : values)
@@ -191,7 +188,8 @@ TEST(ViewKernel, Enumerate)
     auto values = int_array(source);
     auto output = int_array(source.size());
 
-    enumerate_kernel<<<1, 1>>>(values, output);
+    gpu_array_test::launch_input_range_pair<enumerate_kernel<decltype(values), decltype(output)>>({1}, {1}, values,
+                                                                                                  output);
     synchronize();
 
     auto expected = std::vector<int>{};
@@ -207,7 +205,7 @@ TEST(ViewKernel, EnumerateStride)
 {
     auto values = gpu_array::managed_array(std::vector(7, std::vector<int>(11, 0)));
 
-    enumerate_stride_kernel<<<3, 5>>>(values);
+    gpu_array_test::launch_nested_input_range<enumerate_stride_kernel<decltype(values)>>({3}, {5}, values);
     synchronize();
 
     for (auto row_index = std::size_t{0}; row_index < values.size(); ++row_index)
@@ -224,7 +222,7 @@ TEST(ViewKernel, Zip)
     auto lhs = int_array(std::vector<int>{19, 70, 86, 69, 42});
     auto rhs = int_array(std::vector<int>{16, 6, 14});
 
-    zip_kernel<<<1, 1>>>(lhs, rhs);
+    gpu_array_test::launch_input_range_pair<zip_kernel<decltype(lhs), decltype(rhs)>>({1}, {1}, lhs, rhs);
     synchronize();
 
     EXPECT_EQ(lhs.template to<std::vector>(), (std::vector<int>{35, 76, 100, 69, 42}));
@@ -235,11 +233,12 @@ TEST(ViewKernel, ZipStride)
     auto lhs = gpu_array::managed_array(std::vector(7, std::vector<int>(11, 0)));
     auto rhs = gpu_array::managed_array(std::vector(7, std::vector<int>(11, 0)));
 
-    initialize_nested_kernel<<<3, 5>>>(lhs, 1);
-    initialize_nested_kernel<<<3, 5>>>(rhs, 1000);
+    gpu_array_test::launch_nested_input_range<initialize_nested_kernel<decltype(lhs)>>({3}, {5}, lhs, 1);
+    gpu_array_test::launch_nested_input_range<initialize_nested_kernel<decltype(rhs)>>({3}, {5}, rhs, 1000);
     synchronize();
 
-    zip_stride_kernel<<<3, 5>>>(lhs, rhs);
+    gpu_array_test::launch_nested_input_range_pair<zip_stride_kernel<decltype(lhs), decltype(rhs)>>({3}, {5}, lhs,
+                                                                                                    rhs);
     synchronize();
 
     for (auto row_index = std::size_t{0}; row_index < lhs.size(); ++row_index)
@@ -258,7 +257,8 @@ TEST(ViewKernel, ZipEnumerateStride)
     auto lhs = int_array(lhs_source);
     auto rhs = int_array(rhs_source);
 
-    zip_enumerate_stride_kernel<<<1, 2>>>(lhs, rhs);
+    gpu_array_test::launch_input_range_pair<zip_enumerate_stride_kernel<decltype(lhs), decltype(rhs)>>({1}, {2}, lhs,
+                                                                                                       rhs);
     synchronize();
 
     EXPECT_EQ(lhs.template to<std::vector>(), (std::vector<int>{1916, 7012, 8642, 69, 42}));
@@ -271,7 +271,8 @@ TEST(ViewKernel, EnumerateZipStride)
     auto lhs = int_array(lhs_source);
     auto rhs = int_array(rhs_source);
 
-    enumerate_zip_stride_kernel<<<1, 2>>>(lhs, rhs);
+    gpu_array_test::launch_input_range_pair<enumerate_zip_stride_kernel<decltype(lhs), decltype(rhs)>>({1}, {2}, lhs,
+                                                                                                       rhs);
     synchronize();
 
     EXPECT_EQ(lhs.template to<std::vector>(), (std::vector<int>{1916, 7012, 8642, 69, 42}));

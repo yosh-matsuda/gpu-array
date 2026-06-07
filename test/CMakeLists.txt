@@ -110,6 +110,11 @@ find_package(GTest REQUIRED)
 
 # executables
 file(GLOB TEST_SOURCES CONFIGURE_DEPENDS test_*.cpp)
+if(ENABLE_HIP AND GPU_PLATFORM STREQUAL "AMD")
+  list(REMOVE_ITEM TEST_SOURCES
+       "${CMAKE_CURRENT_SOURCE_DIR}/test_blog_examples.cpp"
+       "${CMAKE_CURRENT_SOURCE_DIR}/test_readme_examples.cpp")
+endif()
 add_executable("${PROJECT_NAME}_test" ${TEST_SOURCES})
 set_source_files_properties(${TEST_SOURCES} PROPERTIES LANGUAGE ${GPU_LANGUAGE})
 target_compile_definitions("${PROJECT_NAME}_test"

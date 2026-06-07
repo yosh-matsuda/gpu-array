@@ -1,5 +1,7 @@
 #include "gpu_array.hpp"
 
+#include "constrained_kernel_launch.hpp"
+
 #include <gtest/gtest.h>
 
 #include <concepts>
@@ -137,7 +139,7 @@ namespace
         }
     }
 
-    template <std::ranges::input_range Jagged>
+    template <typename Jagged>
     __global__ void update_flat_views_kernel(Jagged values)
     {
         for (auto&& [index, value] : values | gpu_array::views::enumerate | gpu_array::views::grid_thread_stride)
@@ -161,7 +163,7 @@ namespace
         }
     }
 
-    template <std::ranges::input_range Jagged>
+    template <typename Jagged>
     __global__ void update_soa_flat_views_kernel(Jagged records)
     {
         for (auto&& [index, value] : records | gpu_array::views::enumerate | gpu_array::views::grid_thread_stride)
@@ -258,7 +260,7 @@ TEST(JaggedArrayKernel, FlatViews)
 {
     auto values = managed_int_jagged(make_jagged_ints());
 
-    update_flat_views_kernel<<<2, 3>>>(values);
+    gpu_array_test::launch_input_range<update_flat_views_kernel<decltype(values)>>({2}, {3}, values);
     synchronize();
 
     EXPECT_EQ(values.template to<std::vector>(), (std::vector<int>{1, 12, 23, 34, 45, 56}));
@@ -348,7 +350,7 @@ TEST(JaggedArrayKernel, GpuTupleSoaFlatViews)
     };
     auto records = managed_record_jagged(nested);
 
-    update_soa_flat_views_kernel<<<2, 3>>>(records);
+    gpu_array_test::launch_input_range<update_soa_flat_views_kernel<decltype(records)>>({2}, {3}, records);
     synchronize();
 
     expect_records_eq(records.template to<std::vector>(),
