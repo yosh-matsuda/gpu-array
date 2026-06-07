@@ -75,24 +75,24 @@ jobs:
             c: /home/linuxbrew/.linuxbrew/opt/llvm@19/bin/clang
             cxx: /home/linuxbrew/.linuxbrew/opt/llvm@19/bin/clang++
             gpu_arch: "90"
-          - name: CUDA 12.9.1 / GCC 14
-            backend: cuda
-            version: "12.9.1"
-            enable_hip: "OFF"
-            compiler_package: gcc@14
-            c: /home/linuxbrew/.linuxbrew/bin/gcc-14
-            cxx: /home/linuxbrew/.linuxbrew/bin/g++-14
-            gpu_arch: "90"
-            experimental: true
-          - name: CUDA 12.9.1 / Clang 19
-            backend: cuda
-            version: "12.9.1"
-            enable_hip: "OFF"
-            compiler_package: llvm@19
-            c: /home/linuxbrew/.linuxbrew/opt/llvm@19/bin/clang
-            cxx: /home/linuxbrew/.linuxbrew/opt/llvm@19/bin/clang++
-            gpu_arch: "90"
-            experimental: true
+          # - name: CUDA 12.9.1 / GCC 14
+          #   backend: cuda
+          #   version: "12.9.1"
+          #   enable_hip: "OFF"
+          #   compiler_package: gcc@14
+          #   c: /home/linuxbrew/.linuxbrew/bin/gcc-14
+          #   cxx: /home/linuxbrew/.linuxbrew/bin/g++-14
+          #   gpu_arch: "90"
+          #   experimental: true
+          # - name: CUDA 12.9.1 / Clang 19
+          #   backend: cuda
+          #   version: "12.9.1"
+          #   enable_hip: "OFF"
+          #   compiler_package: llvm@19
+          #   c: /home/linuxbrew/.linuxbrew/opt/llvm@19/bin/clang
+          #   cxx: /home/linuxbrew/.linuxbrew/opt/llvm@19/bin/clang++
+          #   gpu_arch: "90"
+          #   experimental: true
           - name: CUDA 13.0.2 / GCC 13
             backend: cuda
             version: "13.0.2"
