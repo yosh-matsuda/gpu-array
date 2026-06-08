@@ -1,5 +1,5 @@
 /*===================================================*
-|  GPU Array (gpu-array) version v0.3.0              |
+|  GPU Array (gpu-array) version v0.4.0              |
 |  https://github.com/yosh-matsuda/gpu-array         |
 |                                                    |
 |  Copyright (c) 2026 Yoshiki Matsuda @yosh-matsuda  |
