@@ -1,399 +1,250 @@
 name: Tests
 
 on:
-  workflow_dispatch:
-  pull_request:
-  push:
-    branches:
-      - main
-    tags:
-      - "v*"
+    workflow_dispatch:
+    pull_request:
+    push:
+        branches:
+            - main
+        tags:
+            - "v*"
 
 concurrency:
-  group: test-${{ github.ref }}
-  cancel-in-progress: false
+    group: test-${{ github.ref }}
+    cancel-in-progress: false
 
 jobs:
-  ubuntu-build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: CUDA 12.6.3 / GCC 13
-            backend: cuda
-            version: "12.6.3"
-            enable_hip: "OFF"
-            compiler_package: gcc@13
-            c: /home/linuxbrew/.linuxbrew/bin/gcc-13
-            cxx: /home/linuxbrew/.linuxbrew/bin/g++-13
-            gpu_arch: "90"
-          - name: CUDA 12.6.3 / Clang 16
-            backend: cuda
-            version: "12.6.3"
-            enable_hip: "OFF"
-            compiler_package: llvm@16
-            c: /home/linuxbrew/.linuxbrew/opt/llvm@16/bin/clang
-            cxx: /home/linuxbrew/.linuxbrew/opt/llvm@16/bin/clang++
-            gpu_arch: "90"
-          - name: CUDA 12.6.3 / Clang 18
-            backend: cuda
-            version: "12.6.3"
-            enable_hip: "OFF"
-            compiler_package: llvm@18
-            c: /home/linuxbrew/.linuxbrew/opt/llvm@18/bin/clang
-            cxx: /home/linuxbrew/.linuxbrew/opt/llvm@18/bin/clang++
-            gpu_arch: "90"
-          - name: CUDA 12.8.1 / GCC 13
-            backend: cuda
-            version: "12.8.1"
-            enable_hip: "OFF"
-            compiler_package: gcc@13
-            c: /home/linuxbrew/.linuxbrew/bin/gcc-13
-            cxx: /home/linuxbrew/.linuxbrew/bin/g++-13
-            gpu_arch: "90"
-          - name: CUDA 12.8.1 / GCC 14
-            backend: cuda
-            version: "12.8.1"
-            enable_hip: "OFF"
-            compiler_package: gcc@14
-            c: /home/linuxbrew/.linuxbrew/bin/gcc-14
-            cxx: /home/linuxbrew/.linuxbrew/bin/g++-14
-            gpu_arch: "90"
-          - name: CUDA 12.8.1 / Clang 16
-            backend: cuda
-            version: "12.8.1"
-            enable_hip: "OFF"
-            compiler_package: llvm@16
-            c: /home/linuxbrew/.linuxbrew/opt/llvm@16/bin/clang
-            cxx: /home/linuxbrew/.linuxbrew/opt/llvm@16/bin/clang++
-            gpu_arch: "90"
-          - name: CUDA 12.8.1 / Clang 19
-            backend: cuda
-            version: "12.8.1"
-            enable_hip: "OFF"
-            compiler_package: llvm@19
-            c: /home/linuxbrew/.linuxbrew/opt/llvm@19/bin/clang
-            cxx: /home/linuxbrew/.linuxbrew/opt/llvm@19/bin/clang++
-            gpu_arch: "90"
-          # - name: CUDA 12.9.1 / GCC 14
-          #   backend: cuda
-          #   version: "12.9.1"
-          #   enable_hip: "OFF"
-          #   compiler_package: gcc@14
-          #   c: /home/linuxbrew/.linuxbrew/bin/gcc-14
-          #   cxx: /home/linuxbrew/.linuxbrew/bin/g++-14
-          #   gpu_arch: "90"
-          #   experimental: true
-          # - name: CUDA 12.9.1 / Clang 19
-          #   backend: cuda
-          #   version: "12.9.1"
-          #   enable_hip: "OFF"
-          #   compiler_package: llvm@19
-          #   c: /home/linuxbrew/.linuxbrew/opt/llvm@19/bin/clang
-          #   cxx: /home/linuxbrew/.linuxbrew/opt/llvm@19/bin/clang++
-          #   gpu_arch: "90"
-          #   experimental: true
-          - name: CUDA 13.0.2 / GCC 13
-            backend: cuda
-            version: "13.0.2"
-            enable_hip: "OFF"
-            compiler_package: gcc@13
-            c: /home/linuxbrew/.linuxbrew/bin/gcc-13
-            cxx: /home/linuxbrew/.linuxbrew/bin/g++-13
-            gpu_arch: "90"
-          - name: CUDA 13.0.2 / GCC 15
-            backend: cuda
-            version: "13.0.2"
-            enable_hip: "OFF"
-            compiler_package: gcc@15
-            c: /home/linuxbrew/.linuxbrew/bin/gcc-15
-            cxx: /home/linuxbrew/.linuxbrew/bin/g++-15
-            gpu_arch: "90"
-          - name: CUDA 13.0.2 / Clang 16
-            backend: cuda
-            version: "13.0.2"
-            enable_hip: "OFF"
-            compiler_package: llvm@16
-            c: /home/linuxbrew/.linuxbrew/opt/llvm@16/bin/clang
-            cxx: /home/linuxbrew/.linuxbrew/opt/llvm@16/bin/clang++
-            gpu_arch: "90"
-          - name: CUDA 13.0.2 / Clang 20
-            backend: cuda
-            version: "13.0.2"
-            enable_hip: "OFF"
-            compiler_package: llvm@20
-            c: /home/linuxbrew/.linuxbrew/opt/llvm@20/bin/clang
-            cxx: /home/linuxbrew/.linuxbrew/opt/llvm@20/bin/clang++
-            gpu_arch: "90"
-          - name: CUDA 13.1.1 / GCC 13
-            backend: cuda
-            version: "13.1.1"
-            enable_hip: "OFF"
-            compiler_package: gcc@13
-            c: /home/linuxbrew/.linuxbrew/bin/gcc-13
-            cxx: /home/linuxbrew/.linuxbrew/bin/g++-13
-            gpu_arch: "90"
-          - name: CUDA 13.1.1 / GCC 15
-            backend: cuda
-            version: "13.1.1"
-            enable_hip: "OFF"
-            compiler_package: gcc@15
-            c: /home/linuxbrew/.linuxbrew/bin/gcc-15
-            cxx: /home/linuxbrew/.linuxbrew/bin/g++-15
-            gpu_arch: "90"
-          - name: CUDA 13.1.1 / Clang 16
-            backend: cuda
-            version: "13.1.1"
-            enable_hip: "OFF"
-            compiler_package: llvm@16
-            c: /home/linuxbrew/.linuxbrew/opt/llvm@16/bin/clang
-            cxx: /home/linuxbrew/.linuxbrew/opt/llvm@16/bin/clang++
-            gpu_arch: "90"
-          - name: CUDA 13.1.1 / Clang 21
-            backend: cuda
-            version: "13.1.1"
-            enable_hip: "OFF"
-            compiler_package: llvm@21
-            c: /home/linuxbrew/.linuxbrew/opt/llvm@21/bin/clang
-            cxx: /home/linuxbrew/.linuxbrew/opt/llvm@21/bin/clang++
-            gpu_arch: "90"
-          - name: CUDA 13.2.0 / GCC 13
-            backend: cuda
-            version: "13.2.0"
-            enable_hip: "OFF"
-            compiler_package: gcc@13
-            c: /home/linuxbrew/.linuxbrew/bin/gcc-13
-            cxx: /home/linuxbrew/.linuxbrew/bin/g++-13
-            gpu_arch: "90"
-          - name: CUDA 13.2.0 / GCC 15
-            backend: cuda
-            version: "13.2.0"
-            enable_hip: "OFF"
-            compiler_package: gcc@15
-            c: /home/linuxbrew/.linuxbrew/bin/gcc-15
-            cxx: /home/linuxbrew/.linuxbrew/bin/g++-15
-            gpu_arch: "90"
-          - name: CUDA 13.2.0 / Clang 16
-            backend: cuda
-            version: "13.2.0"
-            enable_hip: "OFF"
-            compiler_package: llvm@16
-            c: /home/linuxbrew/.linuxbrew/opt/llvm@16/bin/clang
-            cxx: /home/linuxbrew/.linuxbrew/opt/llvm@16/bin/clang++
-            gpu_arch: "90"
-          - name: CUDA 13.2.0 / Clang 21
-            backend: cuda
-            version: "13.2.0"
-            enable_hip: "OFF"
-            compiler_package: llvm@21
-            c: /home/linuxbrew/.linuxbrew/opt/llvm@21/bin/clang
-            cxx: /home/linuxbrew/.linuxbrew/opt/llvm@21/bin/clang++
-            gpu_arch: "90"
-          - name: HIP 6.2.4 / AMD / ROCm Clang
-            backend: hip
-            version: "6.2.4"
-            enable_hip: "ON"
-            hip_platform: amd
-            compiler_package: llvm@18
-            c: /home/linuxbrew/.linuxbrew/opt/llvm@18/bin/clang
-            cxx: /home/linuxbrew/.linuxbrew/opt/llvm@18/bin/clang++
-            gpu_arch: gfx942
-          - name: HIP 6.4.4 / AMD / ROCm Clang
-            backend: hip
-            version: "6.4.4"
-            enable_hip: "ON"
-            hip_platform: amd
-            compiler_package: llvm@18
-            c: /home/linuxbrew/.linuxbrew/opt/llvm@18/bin/clang
-            cxx: /home/linuxbrew/.linuxbrew/opt/llvm@18/bin/clang++
-            gpu_arch: gfx942
-          - name: HIP 7.0.3 / AMD / ROCm Clang
-            backend: hip
-            version: "7.0.3"
-            enable_hip: "ON"
-            hip_platform: amd
-            compiler_package: llvm@18
-            c: /home/linuxbrew/.linuxbrew/opt/llvm@18/bin/clang
-            cxx: /home/linuxbrew/.linuxbrew/opt/llvm@18/bin/clang++
-            gpu_arch: gfx942
-          - name: HIP 7.1.1 / AMD / ROCm Clang
-            backend: hip
-            version: "7.1.1"
-            enable_hip: "ON"
-            hip_platform: amd
-            compiler_package: llvm@18
-            c: /home/linuxbrew/.linuxbrew/opt/llvm@18/bin/clang
-            cxx: /home/linuxbrew/.linuxbrew/opt/llvm@18/bin/clang++
-            gpu_arch: gfx942
-          - name: HIP 7.2.4 / AMD / ROCm Clang
-            backend: hip
-            version: "7.2.4"
-            enable_hip: "ON"
-            hip_platform: amd
-            compiler_package: llvm@18
-            c: /home/linuxbrew/.linuxbrew/opt/llvm@18/bin/clang
-            cxx: /home/linuxbrew/.linuxbrew/opt/llvm@18/bin/clang++
-            gpu_arch: gfx942
-          - name: HIP 6.2.4 / NVIDIA / Clang 18
-            backend: hip
-            version: "6.2.4"
-            cuda_version: "12.8.1"
-            enable_hip: "ON"
-            hip_platform: nvidia
-            compiler_package: llvm@18
-            c: /home/linuxbrew/.linuxbrew/opt/llvm@18/bin/clang
-            cxx: /home/linuxbrew/.linuxbrew/opt/llvm@18/bin/clang++
-            gpu_arch: "90"
-          - name: HIP 6.4.4 / NVIDIA / Clang 18
-            backend: hip
-            version: "6.4.4"
-            cuda_version: "12.8.1"
-            enable_hip: "ON"
-            hip_platform: nvidia
-            compiler_package: llvm@18
-            c: /home/linuxbrew/.linuxbrew/opt/llvm@18/bin/clang
-            cxx: /home/linuxbrew/.linuxbrew/opt/llvm@18/bin/clang++
-            gpu_arch: "90"
-          - name: HIP 7.0.3 / NVIDIA / Clang 18
-            backend: hip
-            version: "7.0.3"
-            cuda_version: "12.8.1"
-            enable_hip: "ON"
-            hip_platform: nvidia
-            compiler_package: llvm@18
-            c: /home/linuxbrew/.linuxbrew/opt/llvm@18/bin/clang
-            cxx: /home/linuxbrew/.linuxbrew/opt/llvm@18/bin/clang++
-            gpu_arch: "90"
-          - name: HIP 7.1.1 / NVIDIA / Clang 18
-            backend: hip
-            version: "7.1.1"
-            cuda_version: "12.8.1"
-            enable_hip: "ON"
-            hip_platform: nvidia
-            compiler_package: llvm@18
-            c: /home/linuxbrew/.linuxbrew/opt/llvm@18/bin/clang
-            cxx: /home/linuxbrew/.linuxbrew/opt/llvm@18/bin/clang++
-            gpu_arch: "90"
-          - name: HIP 7.2.4 / NVIDIA / Clang 18
-            backend: hip
-            version: "7.2.4"
-            cuda_version: "13.2.0"
-            enable_hip: "ON"
-            hip_platform: nvidia
-            compiler_package: llvm@18
-            c: /home/linuxbrew/.linuxbrew/opt/llvm@18/bin/clang
-            cxx: /home/linuxbrew/.linuxbrew/opt/llvm@18/bin/clang++
-            gpu_arch: "90"
-    name: Ubuntu - ${{ matrix.name }}
-    runs-on: ubuntu-24.04
-    continue-on-error: ${{ matrix.experimental == true }}
+    prepare-matrix:
+        name: Prepare matrix
+        runs-on: ubuntu-24.04
+        outputs:
+            matrix: ${{ steps.generate.outputs.matrix }}
+        steps:
+            - name: Generate build matrix
+              id: generate
+              shell: bash
+              run: |
+                  python3 <<'PY' >> "$GITHUB_OUTPUT"
+                  import json
 
-    env:
-      triplet: x64-linux
+                  compiler_versions = {
+                      "gcc": [13, 14, 15],
+                      "clang": [16, 18, 19, 20, 21],
+                  }
 
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: true
+                  def make_compiler(kind, version):
+                      if kind == "gcc":
+                          return {
+                              "label": f"GCC {version}",
+                              "compiler_package": f"gcc@{version}",
+                              "c": f"/home/linuxbrew/.linuxbrew/bin/gcc-{version}",
+                              "cxx": f"/home/linuxbrew/.linuxbrew/bin/g++-{version}",
+                          }
 
-      - name: Install CUDA
-        if: ${{ matrix.backend == 'cuda' }}
-        uses: Jimver/cuda-toolkit@master
-        id: cuda-toolkit
-        with:
-          cuda: ${{ matrix.version }}
-          sub-packages: '["nvcc"]'
-          method: "network"
+                      llvm_bin = f"/home/linuxbrew/.linuxbrew/opt/llvm@{version}/bin"
+                      return {
+                          "label": f"Clang {version}",
+                          "compiler_package": f"llvm@{version}",
+                          "c": f"{llvm_bin}/clang",
+                          "cxx": f"{llvm_bin}/clang++",
+                      }
 
-      - name: Install CUDA for HIP NVIDIA
-        if: ${{ matrix.backend == 'hip' && matrix.hip_platform == 'nvidia' }}
-        uses: Jimver/cuda-toolkit@master
-        id: cuda-toolkit-hip-nvidia
-        with:
-          cuda: ${{ matrix.cuda_version }}
-          sub-packages: '["nvcc", "profiler-api"]'
-          method: "network"
+                  compilers = {
+                      f"{kind}{version}": make_compiler(kind, version)
+                      for kind, versions in compiler_versions.items()
+                      for version in versions
+                  }
 
-      - name: Install ROCm
-        if: ${{ matrix.backend == 'hip' }}
-        uses: loostrum/rocm-installer@v0.2
-        with:
-          version: ${{ matrix.version }}
+                  cuda = [
+                      {"version": "12.6.3", "gcc": [13], "clang": [16, 18]},
+                      {"version": "12.8.1", "gcc": [13, 14], "clang": [16, 19]},
+                      # {"version": "12.9.1", "gcc": [14], "clang": [19], "experimental": True},
+                      {"version": "13.0.2", "gcc": [13, 15], "clang": [16, 20]},
+                      {"version": "13.1.1", "gcc": [13, 15], "clang": [16, 21]},
+                      {"version": "13.2.0", "gcc": [13, 15], "clang": [16, 21]},
+                  ]
 
-      - name: Install compilers
-        shell: bash
-        run: |
-          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-          brew install ninja ${{ matrix.compiler_package }}
+                  rocm_to_nvidia_cuda_version = {
+                      "6.2.4": "12.8.1",
+                      "6.4.4": "12.8.1",
+                      "7.0.3": "12.8.1",
+                      "7.1.1": "12.8.1",
+                      "7.2.4": "13.2.0",
+                  }
 
-      - name: Show toolchain versions
-        shell: bash
-        run: |
-          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-          ${{ matrix.c }} --version
-          ${{ matrix.cxx }} --version
-          if [[ "${{ matrix.backend }}" == "cuda" || "${{ matrix.hip_platform }}" == "nvidia" ]]; then
-            nvcc --version
-          fi
-          if [[ "${{ matrix.backend }}" == "hip" ]]; then
-            hipcc --version
-            /opt/rocm/lib/llvm/bin/clang++ --version
-          fi
+                  hip = [
+                      {
+                          "platform": "amd",
+                          "label": "AMD / ROCm Clang",
+                          "gpu_arch": "gfx942",
+                      },
+                      {
+                          "platform": "nvidia",
+                          "label": "NVIDIA / Clang 18",
+                          "gpu_arch": "90",
+                      },
+                  ]
 
-      - name: Install dependencies
-        shell: bash
-        run: |
-          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-          for attempt in 1 2 3; do
-            if CC=${{ matrix.c }} CXX=${{ matrix.cxx }} vcpkg install --triplet ${{ env.triplet }}; then
-              exit 0
-            fi
+                  matrix = []
+                  for cuda_config in cuda:
+                      compiler_keys = [
+                          f"{kind}{version}"
+                          for kind in ("gcc", "clang")
+                          for version in cuda_config.get(kind, [])
+                      ]
+                      for compiler_key in compiler_keys:
+                          compiler = compilers[compiler_key]
+                          matrix.append(
+                              {
+                                  "name": f"CUDA {cuda_config['version']} / {compiler['label']}",
+                                  "backend": "cuda",
+                                  "version": cuda_config["version"],
+                                  "enable_hip": "OFF",
+                                  "compiler_package": compiler["compiler_package"],
+                                  "c": compiler["c"],
+                                  "cxx": compiler["cxx"],
+                                  "gpu_arch": "90",
+                                  "experimental": cuda_config.get("experimental", False),
+                              }
+                          )
 
-            if [[ "${attempt}" == "3" ]]; then
-              exit 1
-            fi
+                  rocm_clang = compilers["clang18"]
+                  for hip_config in hip:
+                      for version, cuda_version in rocm_to_nvidia_cuda_version.items():
+                          item = {
+                              "name": f"HIP {version} / {hip_config['label']}",
+                              "backend": "hip",
+                              "version": version,
+                              "enable_hip": "ON",
+                              "hip_platform": hip_config["platform"],
+                              "compiler_package": rocm_clang["compiler_package"],
+                              "c": rocm_clang["c"],
+                              "cxx": rocm_clang["cxx"],
+                              "gpu_arch": hip_config["gpu_arch"],
+                              "experimental": False,
+                          }
+                          if hip_config["platform"] == "nvidia":
+                              item["cuda_version"] = cuda_version
+                          matrix.append(item)
 
-            echo "vcpkg install failed; retrying (${attempt}/3)."
-            sleep 30
-          done
+                  print("matrix=" + json.dumps({"include": matrix}, separators=(",", ":")))
+                  PY
 
-      - name: Build
-        shell: bash
-        run: |
-          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-          rm -rf ${{ github.workspace }}/build
+    ubuntu-build:
+        needs: prepare-matrix
+        strategy:
+            fail-fast: false
+            matrix: ${{ fromJSON(needs.prepare-matrix.outputs.matrix) }}
+        name: Ubuntu - ${{ matrix.name }}
+        runs-on: ubuntu-24.04
+        continue-on-error: ${{ matrix.experimental == true }}
 
-          cmake_args=(
-            -S ${{ github.workspace }}
-            -B ${{ github.workspace }}/build
-            -DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake
-            -DVCPKG_TARGET_TRIPLET=${{ env.triplet }}
-            -DCMAKE_C_COMPILER=${{ matrix.c }}
-            -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
-            -DENABLE_HIP=${{ matrix.enable_hip }}
-            -G "Ninja Multi-Config"
-          )
+        env:
+            triplet: x64-linux
 
-          if [[ "${{ matrix.backend }}" == "cuda" ]]; then
-            cmake_args+=(
-              -DCMAKE_CUDA_ARCHITECTURES=${{ matrix.gpu_arch }}
-            )
-          else
-            cmake_args+=(
-              -DCMAKE_HIP_PLATFORM=${{ matrix.hip_platform }}
-              -DCMAKE_HIP_ARCHITECTURES=${{ matrix.gpu_arch }}
-              -DCMAKE_PREFIX_PATH=/opt/rocm
-            )
-          fi
+        steps:
+            - uses: actions/checkout@v6
+              with:
+                  submodules: true
 
-          cmake "${cmake_args[@]}"
-          cmake --build ${{ github.workspace }}/build --config Debug --clean-first
-          cmake --build ${{ github.workspace }}/build --config Release --clean-first
-          # GitHub-hosted runners do not provide GPUs, so runtime tests are not run here.
-          # Run the full ctest suite on a local or self-hosted GPU runner.
+            - name: Install CUDA
+              if: ${{ matrix.backend == 'cuda' }}
+              uses: Jimver/cuda-toolkit@master
+              id: cuda-toolkit
+              with:
+                  cuda: ${{ matrix.version }}
+                  sub-packages: '["nvcc"]'
+                  method: "network"
 
-      - name: Run PTX comparison
-        if: ${{ matrix.backend == 'cuda' }}
-        shell: bash
-        run: |
-          ctest --output-on-failure -C Debug --test-dir ${{ github.workspace }}/build -R zero_overhead_ptx
+            - name: Install CUDA for HIP NVIDIA
+              if: ${{ matrix.backend == 'hip' && matrix.hip_platform == 'nvidia' }}
+              uses: Jimver/cuda-toolkit@master
+              id: cuda-toolkit-hip-nvidia
+              with:
+                  cuda: ${{ matrix.cuda_version }}
+                  sub-packages: '["nvcc", "profiler-api"]'
+                  method: "network"
+
+            - name: Install ROCm
+              if: ${{ matrix.backend == 'hip' }}
+              uses: loostrum/rocm-installer@v0.2
+              with:
+                  version: ${{ matrix.version }}
+
+            - name: Install compilers
+              shell: bash
+              run: |
+                  eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+                  brew install ninja ${{ matrix.compiler_package }}
+
+            - name: Show toolchain versions
+              shell: bash
+              run: |
+                  eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+                  ${{ matrix.c }} --version
+                  ${{ matrix.cxx }} --version
+                  if [[ "${{ matrix.backend }}" == "cuda" || "${{ matrix.hip_platform }}" == "nvidia" ]]; then
+                    nvcc --version
+                  fi
+                  if [[ "${{ matrix.backend }}" == "hip" ]]; then
+                    hipcc --version
+                    /opt/rocm/lib/llvm/bin/clang++ --version
+                  fi
+
+            - name: Install dependencies
+              shell: bash
+              run: |
+                  eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+                  for attempt in 1 2 3; do
+                    if CC=${{ matrix.c }} CXX=${{ matrix.cxx }} vcpkg install --triplet ${{ env.triplet }}; then
+                      exit 0
+                    fi
+
+                    if [[ "${attempt}" == "3" ]]; then
+                      exit 1
+                    fi
+
+                    echo "vcpkg install failed; retrying (${attempt}/3)."
+                    sleep 30
+                  done
+
+            - name: Build
+              shell: bash
+              run: |
+                  eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+                  rm -rf ${{ github.workspace }}/build
+
+                  cmake_args=(
+                    -S ${{ github.workspace }}
+                    -B ${{ github.workspace }}/build
+                    -DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake
+                    -DVCPKG_TARGET_TRIPLET=${{ env.triplet }}
+                    -DCMAKE_C_COMPILER=${{ matrix.c }}
+                    -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+                    -DENABLE_HIP=${{ matrix.enable_hip }}
+                    -G "Ninja Multi-Config"
+                  )
+
+                  if [[ "${{ matrix.backend }}" == "cuda" ]]; then
+                    cmake_args+=(
+                      -DCMAKE_CUDA_ARCHITECTURES=${{ matrix.gpu_arch }}
+                    )
+                  else
+                    cmake_args+=(
+                      -DCMAKE_HIP_PLATFORM=${{ matrix.hip_platform }}
+                      -DCMAKE_HIP_ARCHITECTURES=${{ matrix.gpu_arch }}
+                      -DCMAKE_PREFIX_PATH=/opt/rocm
+                    )
+                  fi
+
+                  cmake "${cmake_args[@]}"
+                  cmake --build ${{ github.workspace }}/build --config Debug --clean-first
+                  cmake --build ${{ github.workspace }}/build --config Release --clean-first
+                  # GitHub-hosted runners do not provide GPUs, so runtime tests are not run here.
+                  # Run the full ctest suite on a local or self-hosted GPU runner.
+
+            - name: Run PTX comparison
+              if: ${{ matrix.backend == 'cuda' }}
+              shell: bash
+              run: |
+                  ctest --output-on-failure -C Debug --test-dir ${{ github.workspace }}/build -R zero_overhead_ptx
