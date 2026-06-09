@@ -237,7 +237,7 @@ __global__ void add_kernel(managed_array<int> lhs, managed_array<int> rhs)
 
 gpu-array supports both Array of structures (AoS) and Structure of arrays (SoA) for memory layout optimization via `array` and `structure_of_arrays` classes, respectively. The memory layout comparison between `array` (AoS) and `structure_of_arrays` (SoA) is as follows:
 
-![array of structure vs. structure_of_arrays](https://github.com/user-attachments/assets/219085eb-80c7-44e5-9e3b-6607bd8174bf)
+![array of structure vs. structure_of_arrays](docs/assets/aos-soa.png)
 
  In either case, gpu-array provides a structure retrieval interface via array indices. Thus, `structure_of_arrays<tuple-derived>` can be used as a drop-in replacement for `array<tuple-derived>` with optimizing memory layout without altering your algorithm's implementation.
 
@@ -302,7 +302,7 @@ This behaves like a wrapper for `managed_array` or `managed_structure_of_arrays`
 
 The logical and physical data layout of `jagged_array` is as follows:
 
-![data layout of jagged array](https://github.com/user-attachments/assets/7773537d-7259-4d2c-a695-8572906a6057)
+![data layout of jagged array](docs/assets/jagged-array.png)
 
 ```cpp
 #include <gpu_array.hpp>
