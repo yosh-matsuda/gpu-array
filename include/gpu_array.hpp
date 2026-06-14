@@ -83,7 +83,7 @@ namespace gpu_array
             requires (std::default_initializable<Ts> && ...)
             = default;
             template <class... Us>
-            requires (sizeof...(Us) == sizeof...(Ts)) && (std::constructible_from<Ts, Us&&> && ...)
+            requires (sizeof...(Us) == sizeof...(Ts)) && (std::constructible_from<Ts, Us &&> && ...)
             __host__ __device__ tuple_impl(Us&&... us) : tuple_leaf<Is, Ts>(std::forward<Us>(us))...
             {
             }
@@ -106,7 +106,7 @@ namespace gpu_array
             };
             template <class... Us>
             requires (sizeof...(Us) == sizeof...(Ts) && !is_single_tuple<std::remove_cvref_t<Us>...>::value) &&
-                     (std::constructible_from<Ts, Us&&> && ...)
+                     (std::constructible_from<Ts, Us &&> && ...)
             __host__ __device__ tuple(Us&&... us) : base_(std::forward<Us>(us)...)
             {
             }
@@ -198,13 +198,15 @@ namespace gpu_array
         __host__ __device__ decltype(auto) get(tuple<Us...>& t) noexcept
         {
             using leaf = decltype(at_index<I>(t.base_));
-            return (static_cast<leaf&>(t.base_).value);
+            using reference = std::add_lvalue_reference_t<typename leaf::type>;
+            return static_cast<reference>(static_cast<leaf&>(t.base_).value);
         }
         template <std::size_t I, class... Us>
         __host__ __device__ decltype(auto) get(const tuple<Us...>& t) noexcept
         {
             using leaf = decltype(at_index<I>(t.base_));
-            return (static_cast<const leaf&>(t.base_).value);
+            using reference = std::add_lvalue_reference_t<std::add_const_t<typename leaf::type>>;
+            return static_cast<reference>(static_cast<const leaf&>(t.base_).value);
         }
         template <std::size_t I, class... Us>
         __host__ __device__ decltype(auto) get(tuple<Us...>&& t) noexcept
