@@ -116,6 +116,48 @@ namespace
         using gpu_array::get;
         return get<0>(value) + get<1>(value);
     }
+
+    template <std::size_t I, typename GpuTuple, typename StdTuple>
+    constexpr bool index_get_matches_std_get()
+    {
+        return std::same_as<decltype(gpu_array::get<I>(std::declval<GpuTuple&>())),
+                            decltype(std::get<I>(std::declval<StdTuple&>()))> &&
+               (noexcept(gpu_array::get<I>(std::declval<GpuTuple&>())) ==
+                noexcept(std::get<I>(std::declval<StdTuple&>()))) &&
+               std::same_as<decltype(gpu_array::get<I>(std::declval<const GpuTuple&>())),
+                            decltype(std::get<I>(std::declval<const StdTuple&>()))> &&
+               (noexcept(gpu_array::get<I>(std::declval<const GpuTuple&>())) ==
+                noexcept(std::get<I>(std::declval<const StdTuple&>()))) &&
+               std::same_as<decltype(gpu_array::get<I>(std::declval<GpuTuple&&>())),
+                            decltype(std::get<I>(std::declval<StdTuple&&>()))> &&
+               (noexcept(gpu_array::get<I>(std::declval<GpuTuple&&>())) ==
+                noexcept(std::get<I>(std::declval<StdTuple&&>()))) &&
+               std::same_as<decltype(gpu_array::get<I>(std::declval<const GpuTuple&&>())),
+                            decltype(std::get<I>(std::declval<const StdTuple&&>()))> &&
+               (noexcept(gpu_array::get<I>(std::declval<const GpuTuple&&>())) ==
+                noexcept(std::get<I>(std::declval<const StdTuple&&>())));
+    }
+
+    template <typename T, typename GpuTuple, typename StdTuple>
+    constexpr bool type_get_matches_std_get()
+    {
+        return std::same_as<decltype(gpu_array::get<T>(std::declval<GpuTuple&>())),
+                            decltype(std::get<T>(std::declval<StdTuple&>()))> &&
+               (noexcept(gpu_array::get<T>(std::declval<GpuTuple&>())) ==
+                noexcept(std::get<T>(std::declval<StdTuple&>()))) &&
+               std::same_as<decltype(gpu_array::get<T>(std::declval<const GpuTuple&>())),
+                            decltype(std::get<T>(std::declval<const StdTuple&>()))> &&
+               (noexcept(gpu_array::get<T>(std::declval<const GpuTuple&>())) ==
+                noexcept(std::get<T>(std::declval<const StdTuple&>()))) &&
+               std::same_as<decltype(gpu_array::get<T>(std::declval<GpuTuple&&>())),
+                            decltype(std::get<T>(std::declval<StdTuple&&>()))> &&
+               (noexcept(gpu_array::get<T>(std::declval<GpuTuple&&>())) ==
+                noexcept(std::get<T>(std::declval<StdTuple&&>()))) &&
+               std::same_as<decltype(gpu_array::get<T>(std::declval<const GpuTuple&&>())),
+                            decltype(std::get<T>(std::declval<const StdTuple&&>()))> &&
+               (noexcept(gpu_array::get<T>(std::declval<const GpuTuple&&>())) ==
+                noexcept(std::get<T>(std::declval<const StdTuple&&>())));
+    }
 }  // namespace
 
 template <class... TTypes, class... UTypes>
@@ -180,6 +222,31 @@ TEST(Tuple, ConstructionAndElementAccess)
     static_assert(std::same_as<decltype(gpu_array::get<0>(std::move(const_value))), const int&&>);
     EXPECT_EQ(gpu_array::get<0>(const_value), 3);
     EXPECT_EQ(gpu_array::get<1>(const_value), 4.5);
+}
+
+TEST(Tuple, GetMatchesStdGet)
+{
+    static_assert(index_get_matches_std_get<0, gpu_array::tuple<int>, std::tuple<int>>());
+    static_assert(index_get_matches_std_get<0, gpu_array::tuple<int*>, std::tuple<int*>>());
+    static_assert(index_get_matches_std_get<0, gpu_array::tuple<int&>, std::tuple<int&>>());
+    static_assert(index_get_matches_std_get<0, gpu_array::tuple<int&&>, std::tuple<int&&>>());
+
+    static_assert(type_get_matches_std_get<int, gpu_array::tuple<int, double>, std::tuple<int, double>>());
+    static_assert(type_get_matches_std_get<double, gpu_array::tuple<int, double>, std::tuple<int, double>>());
+    static_assert(type_get_matches_std_get<int&, gpu_array::tuple<int&, double>, std::tuple<int&, double>>());
+    static_assert(type_get_matches_std_get<int&&, gpu_array::tuple<int&&, double>, std::tuple<int&&, double>>());
+
+    auto value = gpu_array::tuple<int, double, char>(1, 2.5, 'x');
+    gpu_array::get<double>(value) = 3.5;
+    EXPECT_EQ(gpu_array::get<int>(value), 1);
+    EXPECT_EQ(gpu_array::get<double>(value), 3.5);
+    EXPECT_EQ(gpu_array::get<char>(std::move(value)), 'x');
+
+    auto target = 4;
+    auto referenced = gpu_array::tuple<int&>(target);
+    const auto& const_referenced = referenced;
+    gpu_array::get<0>(const_referenced) = 7;
+    EXPECT_EQ(target, 7);
 }
 
 TEST(Tuple, ConversionAndAssignment)

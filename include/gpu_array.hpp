@@ -24,6 +24,7 @@
 #include <numeric>
 #include <ranges>
 #include <tuple>
+#include <type_traits>
 
 #if !defined(GPU_DEVICE_COMPILE)
 #include <iostream>
@@ -135,13 +136,13 @@ namespace gpu_array
             }
 
             template <std::size_t I, class... Us>
-            __host__ __device__ friend auto& get(tuple<Us...>&);
+            __host__ __device__ friend decltype(auto) get(tuple<Us...>&) noexcept;
             template <std::size_t I, class... Us>
-            __host__ __device__ friend const auto& get(const tuple<Us...>&);
+            __host__ __device__ friend decltype(auto) get(const tuple<Us...>&) noexcept;
             template <std::size_t I, class... Us>
-            __host__ __device__ friend auto&& get(tuple<Us...>&&);
+            __host__ __device__ friend decltype(auto) get(tuple<Us...>&&) noexcept;
             template <std::size_t I, class... Us>
-            __host__ __device__ friend const auto&& get(const tuple<Us...>&&);
+            __host__ __device__ friend decltype(auto) get(const tuple<Us...>&&) noexcept;
 
         private:
             template <class... Us, std::size_t... Is>
@@ -162,29 +163,80 @@ namespace gpu_array
         template <class... Ts>
         tuple(Ts...) -> tuple<Ts...>;
 
+        template <class T, class... Ts>
+        inline constexpr auto tuple_type_count = (std::size_t{0} + ... + (std::same_as<T, Ts> ? 1U : 0U));
+
+        template <std::size_t I, class T>
+        consteval std::size_t tuple_type_index_from()
+        {
+            return I;
+        }
+
+        template <std::size_t I, class T, class First, class... Rest>
+        consteval std::size_t tuple_type_index_from()
+        {
+            if constexpr (std::same_as<T, First>)
+            {
+                return I;
+            }
+            else
+            {
+                return tuple_type_index_from<I + 1, T, Rest...>();
+            }
+        }
+
+        template <class T, class... Ts>
+        consteval std::size_t tuple_type_index()
+        {
+            static_assert(tuple_type_count<T, Ts...> == 1, "tuple type must occur exactly once");
+            return tuple_type_index_from<0, T, Ts...>();
+        }
+
         template <std::size_t I, class... Us>
-        __host__ __device__ auto& get(tuple<Us...>& t)
+        __host__ __device__ decltype(auto) get(tuple<Us...>& t) noexcept
         {
             using leaf = decltype(at_index<I>(t.base_));
-            return static_cast<leaf&>(t.base_).value;
+            return (static_cast<leaf&>(t.base_).value);
         }
         template <std::size_t I, class... Us>
-        __host__ __device__ const auto& get(const tuple<Us...>& t)
+        __host__ __device__ decltype(auto) get(const tuple<Us...>& t) noexcept
         {
             using leaf = decltype(at_index<I>(t.base_));
-            return static_cast<const leaf&>(t.base_).value;
+            return (static_cast<const leaf&>(t.base_).value);
         }
         template <std::size_t I, class... Us>
-        __host__ __device__ auto&& get(tuple<Us...>&& t)
+        __host__ __device__ decltype(auto) get(tuple<Us...>&& t) noexcept
         {
             using leaf = decltype(at_index<I>(t.base_));
             return static_cast<typename leaf::type&&>(static_cast<leaf&>(t.base_).value);
         }
         template <std::size_t I, class... Us>
-        __host__ __device__ const auto&& get(const tuple<Us...>&& t)
+        __host__ __device__ decltype(auto) get(const tuple<Us...>&& t) noexcept
         {
             using leaf = decltype(at_index<I>(t.base_));
-            return static_cast<const typename leaf::type&&>(static_cast<const leaf&>(t.base_).value);
+            using reference = std::add_rvalue_reference_t<std::add_const_t<typename leaf::type>>;
+            return static_cast<reference>(static_cast<const leaf&>(t.base_).value);
+        }
+
+        template <class T, class... Us>
+        __host__ __device__ decltype(auto) get(tuple<Us...>& t) noexcept
+        {
+            return get<tuple_type_index<T, Us...>()>(t);
+        }
+        template <class T, class... Us>
+        __host__ __device__ decltype(auto) get(const tuple<Us...>& t) noexcept
+        {
+            return get<tuple_type_index<T, Us...>()>(t);
+        }
+        template <class T, class... Us>
+        __host__ __device__ decltype(auto) get(tuple<Us...>&& t) noexcept
+        {
+            return get<tuple_type_index<T, Us...>()>(std::move(t));
+        }
+        template <class T, class... Us>
+        __host__ __device__ decltype(auto) get(const tuple<Us...>&& t) noexcept
+        {
+            return get<tuple_type_index<T, Us...>()>(std::move(t));
         }
 
         template <class... Ts, class... Us, std::size_t... Is>
