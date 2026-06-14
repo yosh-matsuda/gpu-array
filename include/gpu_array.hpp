@@ -62,6 +62,7 @@ namespace gpu_array
             requires std::default_initializable<T>
             = default;
             template <class U>
+            requires std::constructible_from<T, U&&>
             __host__ __device__ tuple_leaf(U&& u) : value(std::forward<U>(u))
             {
             }
@@ -82,7 +83,7 @@ namespace gpu_array
             requires (std::default_initializable<Ts> && ...)
             = default;
             template <class... Us>
-            requires (sizeof...(Us) == sizeof...(Ts))
+            requires (sizeof...(Us) == sizeof...(Ts)) && (std::constructible_from<Ts, Us&&> && ...)
             __host__ __device__ tuple_impl(Us&&... us) : tuple_leaf<Is, Ts>(std::forward<Us>(us))...
             {
             }
@@ -104,7 +105,8 @@ namespace gpu_array
             {
             };
             template <class... Us>
-            requires (sizeof...(Us) == sizeof...(Ts) && !is_single_tuple<std::remove_cvref_t<Us>...>::value)
+            requires (sizeof...(Us) == sizeof...(Ts) && !is_single_tuple<std::remove_cvref_t<Us>...>::value) &&
+                     (std::constructible_from<Ts, Us&&> && ...)
             __host__ __device__ tuple(Us&&... us) : base_(std::forward<Us>(us)...)
             {
             }

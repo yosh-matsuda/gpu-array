@@ -50,6 +50,21 @@ namespace
         __host__ __device__ void operator()(int, double) const { *called = true; }
     };
 
+    struct index_list
+    {
+    };
+
+    struct derived_record : gpu_array::tuple<float, unsigned>
+    {
+        using base = gpu_array::tuple<float, unsigned>;
+
+        derived_record(float value, const index_list&) : base(value, 7U), used_custom_constructor(true) {}
+
+        using base::base;
+
+        bool used_custom_constructor = false;
+    };
+
     struct weighted_char_sum
     {
         __host__ __device__ double operator()(int i, double d, char c) const { return i + d + (c == 'x' ? 10.0 : 0.0); }
@@ -222,6 +237,19 @@ TEST(Tuple, ConstructionAndElementAccess)
     static_assert(std::same_as<decltype(gpu_array::get<0>(std::move(const_value))), const int&&>);
     EXPECT_EQ(gpu_array::get<0>(const_value), 3);
     EXPECT_EQ(gpu_array::get<1>(const_value), 4.5);
+}
+
+TEST(Tuple, DerivedConstructorWinsWhenInheritedBaseIsNotConstructible)
+{
+    static_assert(!std::constructible_from<derived_record::base, float, const index_list&>);
+    static_assert(std::constructible_from<derived_record, float, const index_list&>);
+
+    const index_list indices;
+    const auto record = derived_record(1.0F, indices);
+
+    EXPECT_TRUE(record.used_custom_constructor);
+    EXPECT_FLOAT_EQ(gpu_array::get<0>(record), 1.0F);
+    EXPECT_EQ(gpu_array::get<1>(record), 7U);
 }
 
 TEST(Tuple, GetMatchesStdGet)
