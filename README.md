@@ -81,7 +81,7 @@ include(FetchContent)
 FetchContent_Declare(
     gpu_array
     GIT_REPOSITORY https://github.com/yosh-matsuda/gpu-array.git
-    GIT_TAG v0.4.1
+    GIT_TAG v0.4.2
 )
 FetchContent_MakeAvailable(gpu_array)
 target_link_libraries(your_target PRIVATE gpu_array::gpu_array)
