@@ -115,6 +115,15 @@ namespace
         __host__ __device__ decltype(auto) get_c() const { return gpu_array::get<2>(*this); }
     };
 
+    template <typename... Ts>
+    requires (sizeof...(Ts) == 3)
+    struct std_custom_tuple : public std::tuple<Ts...>
+    {
+        using base = std::tuple<Ts...>;
+        using base::base;
+        using base::operator=;
+    };
+
     template <typename Tuple>
     constexpr bool has_unqualified_get()
     {
@@ -175,19 +184,24 @@ namespace
     }
 }  // namespace
 
-template <class... TTypes, class... UTypes>
-requires requires { typename custom_tuple<std::common_type_t<TTypes, UTypes>...>; }
-struct std::common_type<custom_tuple<TTypes...>, custom_tuple<UTypes...>>
+namespace std
 {
-    using type = custom_tuple<std::common_type_t<TTypes, UTypes>...>;
-};
+    template <class... TTypes, class... UTypes>
+    requires requires { typename tuple<common_type_t<TTypes, UTypes>...>; }
+    struct common_type<std_custom_tuple<TTypes...>, std_custom_tuple<UTypes...>>
+    {
+        using type = tuple<common_type_t<TTypes, UTypes>...>;
+    };
 
-template <class... TTypes, class... UTypes, template <class> class TQual, template <class> class UQual>
-requires requires { typename custom_tuple<std::common_reference_t<TQual<TTypes>, UQual<UTypes>>...>; }
-struct std::basic_common_reference<custom_tuple<TTypes...>, custom_tuple<UTypes...>, TQual, UQual>
-{
-    using type = custom_tuple<std::common_reference_t<TQual<TTypes>, UQual<UTypes>>...>;
-};
+    template <class... TTypes, class... UTypes, template <class> class TQual, template <class> class UQual>
+    requires requires {
+        typename tuple<common_reference_t<const remove_reference_t<TTypes>&, const remove_reference_t<UTypes>&>...>;
+    }
+    struct basic_common_reference<std_custom_tuple<TTypes...>, std_custom_tuple<UTypes...>, TQual, UQual>
+    {
+        using type = tuple<common_reference_t<const remove_reference_t<TTypes>&, const remove_reference_t<UTypes>&>...>;
+    };
+}  // namespace std
 
 TEST(Tuple, TypeTraits)
 {
@@ -347,12 +361,27 @@ TEST(Tuple, CommonTypeAndCommonReference)
         std::common_reference_t<gpu_array::tuple<int&, float&>, gpu_array::tuple<const int&, const float&>>;
     static_assert(std::same_as<common_reference, gpu_array::tuple<const int&, const float&>>);
 
+    static_assert(!gpu_array::detail::gpu_tuple_record<gpu_array::tuple, int, float>);
+    static_assert(gpu_array::detail::gpu_tuple_record<custom_tuple, int, float, short>);
+
     using custom_common_type = std::common_type_t<custom_tuple<int, float, short>, custom_tuple<long, double, int>>;
     static_assert(std::same_as<custom_common_type, custom_tuple<long, double, int>>);
 
     using custom_common_reference =
         std::common_reference_t<custom_tuple<int&, float&, short&>, custom_tuple<const int&, const float&, const int&>>;
     static_assert(std::same_as<custom_common_reference, custom_tuple<const int&, const float&, int>>);
+
+    static_assert(!gpu_array::detail::gpu_tuple_record<std_custom_tuple, int, float, short>);
+
+    using std_custom_common_type =
+        std::common_type_t<std_custom_tuple<int, float, short>, std_custom_tuple<long, double, int>>;
+    static_assert(std::same_as<std_custom_common_type, std::tuple<long, double, int>>);
+
+    using std_custom_common_reference = std::common_reference_t<std_custom_tuple<int&, float&, short&>,
+                                                                std_custom_tuple<const int&, const float&, const int&>>;
+    static_assert(std::same_as<std_custom_common_reference, std::tuple<const int&, const float&, int>>);
+    static_assert(
+        std::common_reference_with<std_custom_tuple<int&, float&, short&>&&, std_custom_tuple<int, float, short>&>);
 
     SUCCEED();
 }

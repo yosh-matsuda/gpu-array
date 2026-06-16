@@ -200,33 +200,24 @@ namespace
     }
 }  // namespace
 
-template <class... TTypes, class... UTypes>
-requires requires { typename gpu_tuple_record<std::common_type_t<TTypes, UTypes>...>; }
-struct std::common_type<gpu_tuple_record<TTypes...>, gpu_tuple_record<UTypes...>>
+namespace std
 {
-    using type = gpu_tuple_record<std::common_type_t<TTypes, UTypes>...>;
-};
+    template <class... TTypes, class... UTypes>
+    requires requires { typename tuple<common_type_t<TTypes, UTypes>...>; }
+    struct common_type<std_tuple_record<TTypes...>, std_tuple_record<UTypes...>>
+    {
+        using type = tuple<common_type_t<TTypes, UTypes>...>;
+    };
 
-template <class... TTypes, class... UTypes, template <class> class TQual, template <class> class UQual>
-requires requires { typename gpu_tuple_record<std::common_reference_t<TQual<TTypes>, UQual<UTypes>>...>; }
-struct std::basic_common_reference<gpu_tuple_record<TTypes...>, gpu_tuple_record<UTypes...>, TQual, UQual>
-{
-    using type = gpu_tuple_record<std::common_reference_t<TQual<TTypes>, UQual<UTypes>>...>;
-};
-
-template <class... TTypes, class... UTypes>
-requires requires { typename std_tuple_record<std::common_type_t<TTypes, UTypes>...>; }
-struct std::common_type<std_tuple_record<TTypes...>, std_tuple_record<UTypes...>>
-{
-    using type = std_tuple_record<std::common_type_t<TTypes, UTypes>...>;
-};
-
-template <class... TTypes, class... UTypes, template <class> class TQual, template <class> class UQual>
-requires requires { typename std_tuple_record<std::common_reference_t<TQual<TTypes>, UQual<UTypes>>...>; }
-struct std::basic_common_reference<std_tuple_record<TTypes...>, std_tuple_record<UTypes...>, TQual, UQual>
-{
-    using type = std_tuple_record<std::common_type_t<std::remove_cvref_t<TTypes>, std::remove_cvref_t<UTypes>>...>;
-};
+    template <class... TTypes, class... UTypes, template <class> class TQual, template <class> class UQual>
+    requires requires {
+        typename tuple<common_reference_t<const remove_reference_t<TTypes>&, const remove_reference_t<UTypes>&>...>;
+    }
+    struct basic_common_reference<std_tuple_record<TTypes...>, std_tuple_record<UTypes...>, TQual, UQual>
+    {
+        using type = tuple<common_reference_t<const remove_reference_t<TTypes>&, const remove_reference_t<UTypes>&>...>;
+    };
+}  // namespace std
 
 TEST(JaggedArrayKernel, FlatRange)
 {

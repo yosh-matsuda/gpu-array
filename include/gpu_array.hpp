@@ -300,26 +300,112 @@ namespace gpu_array
     using detail::tuple, detail::get, detail::apply;
 }  // namespace gpu_array
 
-template <class... Ts>
-struct std::tuple_size<gpu_array::tuple<Ts...>> : std::integral_constant<std::size_t, sizeof...(Ts)>
+namespace std
 {
-};
-template <std::size_t I, class... Ts>
-struct std::tuple_element<I, gpu_array::tuple<Ts...>> : std::tuple_element<I, std::tuple<Ts...>>
+    template <class... Ts>
+    struct tuple_size<gpu_array::tuple<Ts...>> : integral_constant<size_t, sizeof...(Ts)>
+    {
+    };
+    template <size_t I, class... Ts>
+    struct tuple_element<I, gpu_array::tuple<Ts...>> : tuple_element<I, tuple<Ts...>>
+    {
+    };
+}  // namespace std
+
+namespace gpu_array::detail
 {
-};
-template <class... TTypes, class... UTypes>
-requires requires { typename gpu_array::tuple<std::common_type_t<TTypes, UTypes>...>; }
-struct std::common_type<gpu_array::tuple<TTypes...>, gpu_array::tuple<UTypes...>>
+    template <class T>
+    struct tuple_record_traits
+    {
+        static constexpr auto gpu = false;
+    };
+
+    template <template <class...> class Tuple, class... Ts>
+    struct tuple_record_traits<Tuple<Ts...>>
+    {
+    private:
+        static constexpr auto is_gpu_record = requires(Tuple<Ts...>& value, const Tuple<Ts...>& const_value) {
+            static_cast<::gpu_array::tuple<Ts...>&>(value);
+            static_cast<const ::gpu_array::tuple<Ts...>&>(const_value);
+        };
+
+    public:
+        static constexpr auto gpu = (!::std::same_as<Tuple<Ts...>, ::gpu_array::tuple<Ts...>>) && is_gpu_record;
+    };
+
+    template <template <class...> class Tuple, class... Ts>
+    concept gpu_tuple_record = tuple_record_traits<Tuple<Ts...>>::gpu;
+}  // namespace gpu_array::detail
+
+namespace std
 {
-    using type = gpu_array::tuple<std::common_type_t<TTypes, UTypes>...>;
-};
-template <class... TTypes, class... UTypes, template <class> class TQual, template <class> class UQual>
-requires requires { typename gpu_array::tuple<std::common_reference_t<TQual<TTypes>, UQual<UTypes>>...>; }
-struct std::basic_common_reference<gpu_array::tuple<TTypes...>, gpu_array::tuple<UTypes...>, TQual, UQual>
-{
-    using type = gpu_array::tuple<std::common_reference_t<TQual<TTypes>, UQual<UTypes>>...>;
-};
+    template <class... TTypes, class... UTypes>
+    requires requires { typename ::gpu_array::tuple<::std::common_type_t<TTypes, UTypes>...>; }
+    struct common_type<::gpu_array::tuple<TTypes...>, ::gpu_array::tuple<UTypes...>>
+    {
+        using type = ::gpu_array::tuple<::std::common_type_t<TTypes, UTypes>...>;
+    };
+
+    namespace gpu_array_tuple_detail
+    {
+        template <class TTuple, class UTuple>
+        struct common_type_result
+        {
+        };
+
+        template <template <class...> class Tuple, class... TTypes, class... UTypes>
+        struct common_type_result<Tuple<TTypes...>, Tuple<UTypes...>>
+        {
+            using type = Tuple<::std::common_type_t<TTypes, UTypes>...>;
+        };
+
+        template <template <class> class TQual, template <class> class UQual, class TType, class UType>
+        struct common_reference_element
+        {
+            using type = ::std::common_reference_t<TQual<TType>, UQual<UType>>;
+        };
+
+        template <class TTuple, class UTuple, template <class> class TQual, template <class> class UQual>
+        struct common_reference_result
+        {
+        };
+
+        template <template <class...> class Tuple, class... TTypes, class... UTypes, template <class> class TQual,
+                  template <class> class UQual>
+        struct common_reference_result<Tuple<TTypes...>, Tuple<UTypes...>, TQual, UQual>
+        {
+            using type = Tuple<typename common_reference_element<TQual, UQual, TTypes, UTypes>::type...>;
+        };
+    }  // namespace gpu_array_tuple_detail
+
+    template <template <class...> class Tuple, class... TTypes, class... UTypes>
+    requires ::gpu_array::detail::gpu_tuple_record<Tuple, TTypes...> &&
+             ::gpu_array::detail::gpu_tuple_record<Tuple, UTypes...> &&
+             requires { typename gpu_array_tuple_detail::common_type_result<Tuple<TTypes...>, Tuple<UTypes...>>::type; }
+    struct common_type<Tuple<TTypes...>, Tuple<UTypes...>>
+    {
+        using type = typename gpu_array_tuple_detail::common_type_result<Tuple<TTypes...>, Tuple<UTypes...>>::type;
+    };
+    template <class... TTypes, class... UTypes, template <class> class TQual, template <class> class UQual>
+    requires requires { typename ::gpu_array::tuple<::std::common_reference_t<TQual<TTypes>, UQual<UTypes>>...>; }
+    struct basic_common_reference<::gpu_array::tuple<TTypes...>, ::gpu_array::tuple<UTypes...>, TQual, UQual>
+    {
+        using type = ::gpu_array::tuple<::std::common_reference_t<TQual<TTypes>, UQual<UTypes>>...>;
+    };
+    template <template <class...> class Tuple, class... TTypes, class... UTypes, template <class> class TQual,
+              template <class> class UQual>
+    requires ::gpu_array::detail::gpu_tuple_record<Tuple, TTypes...> &&
+             ::gpu_array::detail::gpu_tuple_record<Tuple, UTypes...> &&
+             requires {
+                 typename gpu_array_tuple_detail::common_reference_result<Tuple<TTypes...>, Tuple<UTypes...>, TQual,
+                                                                          UQual>::type;
+             }
+    struct basic_common_reference<Tuple<TTypes...>, Tuple<UTypes...>, TQual, UQual>
+    {
+        using type = typename gpu_array_tuple_detail::common_reference_result<Tuple<TTypes...>, Tuple<UTypes...>, TQual,
+                                                                              UQual>::type;
+    };
+}  // namespace std
 
 namespace gpu_array
 {
@@ -1720,6 +1806,7 @@ namespace gpu_array
         using difference_type = std::ptrdiff_t;
         using size_type = std::size_t;
         using value_type = Tuple<Ts...>;
+        using reference = Tuple<Ts&...>;
         using iterator_concept = std::random_access_iterator_tag;
 
         structure_of_arrays_iterator() = default;
@@ -1731,19 +1818,19 @@ namespace gpu_array
 
         __host__ __device__ explicit structure_of_arrays_iterator(gpu_array::tuple<Ts*...> ptrs) : ptrs_(ptrs) {}
 
-        __host__ __device__ Tuple<Ts&...> operator*() const
+        __host__ __device__ reference operator*() const
         {
-            return gpu_array::apply([](auto*... ptrs) { return Tuple<Ts&...>(*ptrs...); }, ptrs_);
+            return gpu_array::apply([](auto*... ptrs) { return reference(*ptrs...); }, ptrs_);
         }
-        __host__ __device__ Tuple<Ts&...> operator[](size_type n) const
+        __host__ __device__ reference operator[](size_type n) const
         {
-            return gpu_array::apply([n](auto*... ptrs) { return Tuple<Ts&...>(ptrs[n]...); }, ptrs_);
+            return gpu_array::apply([n](auto*... ptrs) { return reference(ptrs[n]...); }, ptrs_);
         }
         __host__ __device__ auto operator->() const
         {
             struct
             {
-                Tuple<Ts&...> t;
+                reference t;
                 __host__ __device__ inline auto* operator->() { return &t; }
             } cap{**this};
             return cap;

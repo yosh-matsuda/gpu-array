@@ -248,8 +248,8 @@ gpu-array supports both Array of structures (AoS) and Structure of arrays (SoA) 
 using namespace gpu_array;
 
 // gpu_array::tuple is a lightweight std::tuple-like type for GPU device code.
-// gpu_array::tuple (or std::tuple) or its derived struct can be used as structure type
-// The below example shows a tuple-derived struct with three members and their accessors
+// gpu_array::tuple (or std::tuple) and derived record types can be used as the structure type.
+// Inherit constructors and assignment when deriving so SoA references can be assigned like values.
 template <typename... Ts>
 requires (sizeof...(Ts) == 3)
 struct CustomTuple : public tuple<Ts...>

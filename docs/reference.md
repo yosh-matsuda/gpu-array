@@ -4,9 +4,11 @@ Detailed API reference for gpu-array.
 
 ## `gpu_array::tuple`
 
-`gpu_array::tuple` is a lightweight tuple implementation intended for GPU device code. It provides a `std::tuple`-like interface, including `gpu_array::get`, `gpu_array::apply`, and `std::tuple_size` / `std::tuple_element` support, and is designed to be used as a device-friendly drop-in replacement for `std::tuple` in gpu-array APIs.
+`gpu_array::tuple` is a lightweight tuple implementation intended for GPU device code. It provides a `std::tuple`-like interface, including `gpu_array::get`, `gpu_array::apply`, `std::tuple_size` / `std::tuple_element` support, and common type/reference support needed by standard range concepts. It is designed to be used as a device-friendly drop-in replacement for `std::tuple` in gpu-array APIs.
 
 Prefer `gpu_array::tuple` for tuple-like values that need to be used inside CUDA/HIP kernels. `std::tuple` can also be used with APIs such as `structure_of_arrays` when the backend standard library supports the required tuple operations in device code.
+
+Class templates derived from `gpu_array::tuple<Ts...>` are also supported as record types. For such derived record types, gpu-array provides the `std::common_type` and `std::basic_common_reference` specializations required for SoA iterators, standard range concepts, and composed views such as `views::enumerate` and `views::zip`.
 
 ## `array` / `managed_array`
 
@@ -402,7 +404,7 @@ class managed_structure_of_arrays<Tuple<Ts...>, SizeType>;
 
 The `structure_of_arrays` and `managed_structure_of_arrays` classes provide smart pointer-like wrappers for managing Structure-of-Arrays (SoA) memory layout on the GPU. They allow for optimized memory access patterns by storing each member of a structure in separate contiguous arrays. The index access interface allows retrieval of the entire structure at a given index. This class is useful for maximizing coalesced memory access on GPUs. These classes support C++20 ranges and iterator concepts.
 
-The value type of `structure_of_arrays<Ts...>` is `gpu_array::tuple<Ts...>`. If a structure-like accessor interface is desired, the value type can also be `gpu_array::tuple<Ts...>`, `std::tuple<Ts...>`, or a tuple-like class template derived from one of them. The tuple-like type must be constructible as `Tuple<Ts...>`, `Tuple<Ts&...>`, and `Tuple<const Ts&...>`, and each element must be accessible with `get<N>(value)` found by unqualified lookup. The example definition of such tuple-derived class is as follows:
+The value type of `structure_of_arrays<Ts...>` is `gpu_array::tuple<Ts...>`. If a structure-like accessor interface is desired, the value type can also be `gpu_array::tuple<Ts...>`, `std::tuple<Ts...>`, or a class template derived from one of them. The tuple-like type must be constructible as `Tuple<Ts...>`, `Tuple<Ts&...>`, and `Tuple<const Ts&...>`, and each element must be accessible with `get<N>(value)` found by unqualified lookup. The example definition of a `gpu_array::tuple`-derived class is as follows:
 
 ```cpp
 template <typename... Ts>
@@ -417,7 +419,36 @@ struct CustomTuple : public gpu_array::tuple<Ts...>
 };
 ```
 
-The same pattern can be used with `std::tuple<Ts...>` and `std::get` in host/device environments where the standard library tuple implementation is available in device code.
+The same accessor pattern can be used with `std::tuple<Ts...>` and `std::get` in host/device environments where the standard library tuple implementation is available in device code. When deriving from `gpu_array::tuple<Ts...>`, gpu-array supplies the `std::common_type` and `std::basic_common_reference` support needed by SoA iterators and standard range concepts. When deriving from `std::tuple<Ts...>`, define the required `std::common_type` and `std::basic_common_reference` specializations in user code if the type is used as a record type in ranges. Inherit the base assignment operator when algorithms may assign `Tuple<Ts...>` values through `Tuple<Ts&...>` references.
+
+```cpp
+template <typename... Ts>
+requires (sizeof...(Ts) == 3)
+struct StdCustomTuple : public std::tuple<Ts...>
+{
+    using std::tuple<Ts...>::tuple;
+    using std::tuple<Ts...>::operator=;
+    __host__ __device__ decltype(auto) get_a() { return std::get<0>(*this); }
+    __host__ __device__ decltype(auto) get_b() { return std::get<1>(*this); }
+    __host__ __device__ decltype(auto) get_c() { return std::get<2>(*this); }
+};
+
+namespace std
+{
+    template <class... TTypes, class... UTypes>
+    struct common_type<StdCustomTuple<TTypes...>, StdCustomTuple<UTypes...>>
+    {
+        using type = tuple<common_type_t<TTypes, UTypes>...>;
+    };
+
+    template <class... TTypes, class... UTypes, template <class> class TQual, template <class> class UQual>
+    struct basic_common_reference<StdCustomTuple<TTypes...>, StdCustomTuple<UTypes...>, TQual, UQual>
+    {
+        using type = tuple<common_reference_t<const remove_reference_t<TTypes>&,
+                                             const remove_reference_t<UTypes>&>...>;
+    };
+}  // namespace std
+```
 
 The template parameters `Ts...` correspond to the member types of the tuple-derived class. All parameters must be value types (i.e., not reference types), since the members are stored in separate arrays and returns by tuple of reference types of each element when accessed.
 
@@ -560,32 +591,7 @@ std::ranges::common_range<managed_soa_type>;
 std::ranges::viewable_range<managed_soa_type>;
 ```
 
-Note: `std::tuple<Ts...>` and `gpu_array::tuple<Ts...>` already provide the common-reference machinery needed by the standard range concepts. When you define your own tuple-derived class and use it as the element type of `structure_of_arrays` or `managed_structure_of_arrays`, you may need to inherit the base tuple assignment operator and specialize `std::common_type` and `std::basic_common_reference`. This is required when the SoA range is checked against concepts such as `std::ranges::input_range`, `std::ranges::forward_range`, or `std::ranges::random_access_range`, and when it is passed to sized range views such as `views::enumerate` or `views::zip`.
-
-The specializations are not needed for `array<CustomTuple<...>>`, `managed_array<CustomTuple<...>>`, or simple SoA kernels that only use `views::grid_thread_stride` without constraining the kernel parameter as a standard range. Inheriting assignment is especially important when algorithms assign `Tuple<Ts...>` values through `Tuple<Ts&...>` references. For example:
-
-```cpp
-template <typename... Ts>
-struct CustomTuple : public gpu_array::tuple<Ts...>
-{
-    using gpu_array::tuple<Ts...>::tuple;
-    using gpu_array::tuple<Ts...>::operator=;
-};
-
-template <class... TTypes, class... UTypes>
-requires requires { typename CustomTuple<std::common_type_t<TTypes, UTypes>...>; }
-struct std::common_type<CustomTuple<TTypes...>, CustomTuple<UTypes...>>
-{
-    using type = CustomTuple<std::common_type_t<TTypes, UTypes>...>;
-};
-
-template <class... TTypes, class... UTypes, template <class> class TQual, template <class> class UQual>
-requires requires { typename CustomTuple<std::common_reference_t<TQual<TTypes>, UQual<UTypes>>...>; }
-struct std::basic_common_reference<CustomTuple<TTypes...>, CustomTuple<UTypes...>, TQual, UQual>
-{
-    using type = CustomTuple<std::common_reference_t<TQual<TTypes>, UQual<UTypes>>...>;
-};
-```
+Note: `gpu_array::tuple<Ts...>` and class templates derived from it provide the common-reference machinery needed by standard range concepts. This is what allows SoA ranges to satisfy concepts such as `std::ranges::input_range`, `std::ranges::forward_range`, and `std::ranges::random_access_range`, and to compose with sized range views such as `views::enumerate` and `views::zip`. `std::tuple<Ts...>` can also be used when the backend standard library provides the required tuple operations in device code. For class templates derived from `std::tuple<Ts...>`, provide the corresponding common type/reference specializations in user code.
 
 ### Smart pointer interface
 
