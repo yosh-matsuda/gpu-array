@@ -295,6 +295,45 @@ namespace gpu_array
             return apply_impl(std::forward<F>(f), std::forward<Tuple>(t),
                               std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<Tuple>>>{});
         }
+        template <template <class...> class Tuple, class... Ts>
+        concept gpu_tuple_record = (!::std::same_as<Tuple<Ts...>, ::gpu_array::detail::tuple<Ts...>>) &&
+                                   requires(Tuple<Ts...>& value, const Tuple<Ts...>& const_value) {
+                                       static_cast<::gpu_array::detail::tuple<Ts...>&>(value);
+                                       static_cast<const ::gpu_array::detail::tuple<Ts...>&>(const_value);
+                                   };
+
+        template <class TTuple, class UTuple>
+        struct tuple_common_type_result
+        {
+        };
+
+        template <template <class...> class Tuple, class... TTypes, class... UTypes>
+        struct tuple_common_type_result<Tuple<TTypes...>, Tuple<UTypes...>>
+        {
+            using type = Tuple<::std::common_type_t<TTypes, UTypes>...>;
+        };
+
+        template <template <class> class TQual, template <class> class UQual, class TType, class UType>
+        struct tuple_common_reference_element
+        {
+            using type = ::std::common_reference_t<TQual<TType>, UQual<UType>>;
+        };
+
+        template <class TTuple, class UTuple, template <class> class TQual, template <class> class UQual>
+        struct tuple_common_reference_result
+        {
+        };
+
+        template <template <class...> class Tuple, class... TTypes, class... UTypes, template <class> class TQual,
+                  template <class> class UQual>
+        struct tuple_common_reference_result<Tuple<TTypes...>, Tuple<UTypes...>, TQual, UQual>
+        {
+            using type = Tuple<typename tuple_common_reference_element<TQual, UQual, TTypes, UTypes>::type...>;
+        };
+
+        template <class TTuple, class UTuple, template <class> class TQual, template <class> class UQual>
+        using tuple_common_reference_result_t =
+            typename tuple_common_reference_result<TTuple, UTuple, TQual, UQual>::type;
     }  // namespace detail
 
     using detail::tuple, detail::get, detail::apply;
@@ -310,35 +349,7 @@ namespace std
     struct tuple_element<I, gpu_array::tuple<Ts...>> : tuple_element<I, tuple<Ts...>>
     {
     };
-}  // namespace std
 
-namespace gpu_array::detail
-{
-    template <class T>
-    struct tuple_record_traits
-    {
-        static constexpr auto gpu = false;
-    };
-
-    template <template <class...> class Tuple, class... Ts>
-    struct tuple_record_traits<Tuple<Ts...>>
-    {
-    private:
-        static constexpr auto is_gpu_record = requires(Tuple<Ts...>& value, const Tuple<Ts...>& const_value) {
-            static_cast<::gpu_array::tuple<Ts...>&>(value);
-            static_cast<const ::gpu_array::tuple<Ts...>&>(const_value);
-        };
-
-    public:
-        static constexpr auto gpu = (!::std::same_as<Tuple<Ts...>, ::gpu_array::tuple<Ts...>>) && is_gpu_record;
-    };
-
-    template <template <class...> class Tuple, class... Ts>
-    concept gpu_tuple_record = tuple_record_traits<Tuple<Ts...>>::gpu;
-}  // namespace gpu_array::detail
-
-namespace std
-{
     template <class... TTypes, class... UTypes>
     requires requires { typename ::gpu_array::tuple<::std::common_type_t<TTypes, UTypes>...>; }
     struct common_type<::gpu_array::tuple<TTypes...>, ::gpu_array::tuple<UTypes...>>
@@ -346,45 +357,14 @@ namespace std
         using type = ::gpu_array::tuple<::std::common_type_t<TTypes, UTypes>...>;
     };
 
-    namespace gpu_array_tuple_detail
-    {
-        template <class TTuple, class UTuple>
-        struct common_type_result
-        {
-        };
-
-        template <template <class...> class Tuple, class... TTypes, class... UTypes>
-        struct common_type_result<Tuple<TTypes...>, Tuple<UTypes...>>
-        {
-            using type = Tuple<::std::common_type_t<TTypes, UTypes>...>;
-        };
-
-        template <template <class> class TQual, template <class> class UQual, class TType, class UType>
-        struct common_reference_element
-        {
-            using type = ::std::common_reference_t<TQual<TType>, UQual<UType>>;
-        };
-
-        template <class TTuple, class UTuple, template <class> class TQual, template <class> class UQual>
-        struct common_reference_result
-        {
-        };
-
-        template <template <class...> class Tuple, class... TTypes, class... UTypes, template <class> class TQual,
-                  template <class> class UQual>
-        struct common_reference_result<Tuple<TTypes...>, Tuple<UTypes...>, TQual, UQual>
-        {
-            using type = Tuple<typename common_reference_element<TQual, UQual, TTypes, UTypes>::type...>;
-        };
-    }  // namespace gpu_array_tuple_detail
-
     template <template <class...> class Tuple, class... TTypes, class... UTypes>
     requires ::gpu_array::detail::gpu_tuple_record<Tuple, TTypes...> &&
-             ::gpu_array::detail::gpu_tuple_record<Tuple, UTypes...> &&
-             requires { typename gpu_array_tuple_detail::common_type_result<Tuple<TTypes...>, Tuple<UTypes...>>::type; }
+             ::gpu_array::detail::gpu_tuple_record<Tuple, UTypes...> && requires {
+                 typename ::gpu_array::detail::tuple_common_type_result<Tuple<TTypes...>, Tuple<UTypes...>>::type;
+             }
     struct common_type<Tuple<TTypes...>, Tuple<UTypes...>>
     {
-        using type = typename gpu_array_tuple_detail::common_type_result<Tuple<TTypes...>, Tuple<UTypes...>>::type;
+        using type = typename ::gpu_array::detail::tuple_common_type_result<Tuple<TTypes...>, Tuple<UTypes...>>::type;
     };
     template <class... TTypes, class... UTypes, template <class> class TQual, template <class> class UQual>
     requires requires { typename ::gpu_array::tuple<::std::common_reference_t<TQual<TTypes>, UQual<UTypes>>...>; }
@@ -395,15 +375,14 @@ namespace std
     template <template <class...> class Tuple, class... TTypes, class... UTypes, template <class> class TQual,
               template <class> class UQual>
     requires ::gpu_array::detail::gpu_tuple_record<Tuple, TTypes...> &&
-             ::gpu_array::detail::gpu_tuple_record<Tuple, UTypes...> &&
-             requires {
-                 typename gpu_array_tuple_detail::common_reference_result<Tuple<TTypes...>, Tuple<UTypes...>, TQual,
-                                                                          UQual>::type;
+             ::gpu_array::detail::gpu_tuple_record<Tuple, UTypes...> && requires {
+                 typename ::gpu_array::detail::tuple_common_reference_result_t<Tuple<TTypes...>, Tuple<UTypes...>,
+                                                                               TQual, UQual>;
              }
     struct basic_common_reference<Tuple<TTypes...>, Tuple<UTypes...>, TQual, UQual>
     {
-        using type = typename gpu_array_tuple_detail::common_reference_result<Tuple<TTypes...>, Tuple<UTypes...>, TQual,
-                                                                              UQual>::type;
+        using type =
+            ::gpu_array::detail::tuple_common_reference_result_t<Tuple<TTypes...>, Tuple<UTypes...>, TQual, UQual>;
     };
 }  // namespace std
 
