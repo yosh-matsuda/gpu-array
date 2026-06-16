@@ -12,6 +12,7 @@
 // NOLINTBEGIN
 namespace
 {
+    using device_int_array = gpu_array::array<int, std::uint32_t>;
     using int_array = gpu_array::managed_array<int, std::uint32_t>;
 
     void synchronize() { GPU_CHECK_ERROR(gpu_array::api::gpuDeviceSynchronize()); }
@@ -77,6 +78,15 @@ namespace
     __global__ void zip_kernel(Lhs lhs, Rhs rhs)
     {
         for (auto&& [left, right] : gpu_array::views::zip(lhs, rhs))
+        {
+            left += right;
+        }
+    }
+
+    template <typename Lhs, typename Rhs>
+    __global__ void zip_const_source_stride_kernel(Lhs lhs, const Rhs rhs)
+    {
+        for (auto&& [left, right] : gpu_array::views::zip(lhs, rhs) | gpu_array::views::grid_thread_stride)
         {
             left += right;
         }
@@ -169,7 +179,7 @@ TEST(ViewKernel, StrideAliases)
     auto values = gpu_array::managed_array(std::vector(5, std::vector<int>(9, 0)));
 
     gpu_array_test::launch_nested_input_range<update_nested_stride_alias_kernel<decltype(values)>>({2}, {4}, values,
-                                                                                                    23);
+                                                                                                   23);
     synchronize();
 
     for (const auto& row : values)
@@ -228,6 +238,18 @@ TEST(ViewKernel, Zip)
     EXPECT_EQ(lhs.template to<std::vector>(), (std::vector<int>{35, 76, 100, 69, 42}));
 }
 
+TEST(ViewKernel, ZipConstDeviceArraySourceStride)
+{
+    auto lhs = device_int_array(std::vector<int>{19, 70, 86, 69, 42});
+    auto rhs = device_int_array(std::vector<int>{16, 6, 14});
+
+    zip_const_source_stride_kernel<<<1, 2>>>(lhs, rhs);
+    synchronize();
+
+    EXPECT_EQ(lhs.template to<std::vector>(), (std::vector<int>{35, 76, 100, 69, 42}));
+    EXPECT_EQ(rhs.template to<std::vector>(), (std::vector<int>{16, 6, 14}));
+}
+
 TEST(ViewKernel, ZipStride)
 {
     auto lhs = gpu_array::managed_array(std::vector(7, std::vector<int>(11, 0)));
@@ -237,8 +259,7 @@ TEST(ViewKernel, ZipStride)
     gpu_array_test::launch_nested_input_range<initialize_nested_kernel<decltype(rhs)>>({3}, {5}, rhs, 1000);
     synchronize();
 
-    gpu_array_test::launch_nested_input_range_pair<zip_stride_kernel<decltype(lhs), decltype(rhs)>>({3}, {5}, lhs,
-                                                                                                    rhs);
+    gpu_array_test::launch_nested_input_range_pair<zip_stride_kernel<decltype(lhs), decltype(rhs)>>({3}, {5}, lhs, rhs);
     synchronize();
 
     for (auto row_index = std::size_t{0}; row_index < lhs.size(); ++row_index)

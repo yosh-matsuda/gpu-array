@@ -732,6 +732,7 @@ namespace gpu_array
             __host__ __device__ It end() const noexcept { return begin_ + size_; }
             __host__ __device__ SizeType size() const noexcept { return size_; }
             __host__ __device__ bool empty() const noexcept { return size_ == 0; }
+            __host__ __device__ decltype(auto) operator[](SizeType index) const noexcept { return begin_[index]; }
         };
     }  // namespace detail
 
@@ -3175,6 +3176,50 @@ namespace gpu_array
             }
         };
 
+        template <RandomAccessRange Range>
+        requires std::same_as<Range, std::remove_cv_t<Range>>
+        class const_view : public ViewInterface<const_view<Range>>
+        {
+        public:
+            const_view()
+            requires std::default_initializable<Range>
+            = default;
+            __host__ __device__ explicit const_view(const Range& range) noexcept : range_(range) {}
+
+            [[nodiscard]] __host__ __device__ auto begin() const noexcept { return range_.begin(); }
+            [[nodiscard]] __host__ __device__ auto end() const noexcept { return range_.end(); }
+            [[nodiscard]] __host__ __device__ auto size() const noexcept { return range_.size(); }
+
+        private:
+            Range range_{};
+        };
+
+        template <class Range>
+        inline constexpr bool is_const_lvalue_range_v =
+            std::is_lvalue_reference_v<Range> && std::is_const_v<std::remove_reference_t<Range>>;
+
+        template <class Range>
+        concept view_argument = (!std::is_const_v<std::remove_reference_t<Range>>) || std::is_lvalue_reference_v<Range>;
+
+        template <class Range>
+        using normalized_view_t =
+            std::conditional_t<is_const_lvalue_range_v<Range>, const_view<std::remove_cvref_t<Range>>,
+                               std::remove_reference_t<Range>>;
+
+        template <RandomAccessRange Range>
+        requires view_argument<Range>
+        [[nodiscard]] __host__ __device__ auto normalize_view(Range&& range) noexcept
+        {
+            if constexpr (is_const_lvalue_range_v<Range>)
+            {
+                return const_view<std::remove_cvref_t<Range>>(range);
+            }
+            else
+            {
+                return std::forward<Range>(range);
+            }
+        }
+
         enum class Stride : std::uint8_t
         {
             BlockThread,
@@ -3396,14 +3441,14 @@ namespace gpu_array
         struct stride_adapter
         {
             template <RandomAccessRange Range>
-            requires std::ranges::sized_range<Range>
+            requires std::ranges::sized_range<Range> && view_argument<Range>
             [[nodiscard]] __host__ __device__ auto operator()(Range&& r) const noexcept
             {
-                return stride_view<StrideType, std::remove_reference_t<Range>>(std::forward<Range>(r));
+                return stride_view<StrideType, normalized_view_t<Range>>(normalize_view(std::forward<Range>(r)));
             }
 
             template <RandomAccessRange Range>
-            requires std::ranges::sized_range<Range>
+            requires std::ranges::sized_range<Range> && view_argument<Range>
             [[nodiscard]] __host__ __device__ friend std::ranges::view auto operator|(
                 Range&& r, const stride_adapter& self) noexcept
             {
@@ -3629,14 +3674,14 @@ namespace gpu_array
         struct enumerate_adapter
         {
             template <RandomAccessRange Range>
-            requires std::ranges::sized_range<Range>
+            requires std::ranges::sized_range<Range> && view_argument<Range>
             [[nodiscard]] __host__ __device__ auto operator()(Range&& r) const noexcept
             {
-                return enumerate_view<std::remove_reference_t<Range>>(std::forward<Range>(r));
+                return enumerate_view<normalized_view_t<Range>>(normalize_view(std::forward<Range>(r)));
             }
 
             template <RandomAccessRange Range>
-            requires std::ranges::sized_range<Range>
+            requires std::ranges::sized_range<Range> && view_argument<Range>
             [[nodiscard]] __host__ __device__ friend std::ranges::view auto operator|(
                 Range&& r, const enumerate_adapter& self) noexcept
             {
@@ -3813,10 +3858,10 @@ namespace gpu_array
         struct zip_adapter
         {
             template <RandomAccessRange... Ranges>
-            requires (std::ranges::sized_range<Ranges> && ...)
+            requires (std::ranges::sized_range<Ranges> && ...) && (view_argument<Ranges> && ...)
             [[nodiscard]] __host__ __device__ auto operator()(Ranges&&... rs) const noexcept
             {
-                return zip_view<std::remove_reference_t<Ranges>...>(std::forward<Ranges>(rs)...);
+                return zip_view<normalized_view_t<Ranges>...>(normalize_view(std::forward<Ranges>(rs))...);
             }
         };
     }  // namespace detail
@@ -3858,6 +3903,8 @@ inline constexpr bool std::ranges::enable_borrowed_range<gpu_array::jagged_array
 #endif
 template <typename... Ts>
 inline constexpr bool std::ranges::enable_borrowed_range<gpu_array::detail::subrange<Ts...>> = true;
+template <gpu_array::detail::RandomAccessRange Range>
+inline constexpr bool std::ranges::enable_view<gpu_array::detail::const_view<Range>> = true;
 template <gpu_array::detail::Stride StrideType, gpu_array::detail::RandomAccessRange Range>
 inline constexpr bool std::ranges::enable_view<gpu_array::detail::stride_view<StrideType, Range>> = true;
 template <gpu_array::detail::RandomAccessRange Range>

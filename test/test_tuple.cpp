@@ -272,6 +272,7 @@ TEST(Tuple, GetMatchesStdGet)
     static_assert(index_get_matches_std_get<0, gpu_array::tuple<int*>, std::tuple<int*>>());
     static_assert(index_get_matches_std_get<0, gpu_array::tuple<int&>, std::tuple<int&>>());
     static_assert(index_get_matches_std_get<0, gpu_array::tuple<int&&>, std::tuple<int&&>>());
+    static_assert(index_get_matches_std_get<1, gpu_array::tuple<int&, const int&>, std::tuple<int&, const int&>>());
 
     static_assert(type_get_matches_std_get<int, gpu_array::tuple<int, double>, std::tuple<int, double>>());
     static_assert(type_get_matches_std_get<double, gpu_array::tuple<int, double>, std::tuple<int, double>>());

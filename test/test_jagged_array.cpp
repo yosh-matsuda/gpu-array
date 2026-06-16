@@ -137,8 +137,12 @@ TEST(JaggedArrayTypes, Constraints)
     using managed_std_record_jagged = gpu_array::jagged_array<managed_std_record_soa>;
     using enumerate_int_jagged_view = gpu_array::enumerate_view<managed_int_jagged>;
     using zip_int_jagged_view = gpu_array::zip_view<managed_int_jagged, managed_int_jagged>;
+    using const_zip_int_jagged_view =
+        decltype(gpu_array::views::zip(std::declval<managed_int_jagged&>(), std::declval<const managed_int_jagged&>()));
     using enumerate_record_jagged_view = gpu_array::enumerate_view<managed_gpu_record_jagged>;
     using zip_record_jagged_view = gpu_array::zip_view<managed_gpu_record_jagged, managed_gpu_record_jagged>;
+    using const_zip_record_jagged_view = decltype(gpu_array::views::zip(
+        std::declval<managed_gpu_record_jagged&>(), std::declval<const managed_gpu_record_jagged&>()));
 
     static_assert(gpu_array::gpu_managed_random_access_range<managed_int_array>);
     static_assert(gpu_array::gpu_managed_random_access_range<managed_gpu_record_soa>);
@@ -164,6 +168,8 @@ TEST(JaggedArrayTypes, Constraints)
     static_assert(std::ranges::input_range<zip_int_jagged_view>);
     static_assert(std::same_as<std::ranges::range_value_t<zip_int_jagged_view>, gpu_array::tuple<int, int>>);
     static_assert(std::same_as<std::ranges::range_reference_t<zip_int_jagged_view>, gpu_array::tuple<int&, int&>>);
+    static_assert(
+        std::same_as<std::ranges::range_reference_t<const_zip_int_jagged_view>, gpu_array::tuple<int&, const int&>>);
     static_assert(std::ranges::input_range<enumerate_record_jagged_view>);
     static_assert(std::same_as<std::ranges::range_value_t<enumerate_record_jagged_view>,
                                gpu_array::tuple<std::uint32_t, gpu_record>>);
@@ -175,6 +181,9 @@ TEST(JaggedArrayTypes, Constraints)
     static_assert(std::same_as<
                   std::ranges::range_reference_t<zip_record_jagged_view>,
                   gpu_array::tuple<gpu_tuple_record<int&, float&, double&>, gpu_tuple_record<int&, float&, double&>>>);
+    static_assert(std::same_as<std::ranges::range_reference_t<const_zip_record_jagged_view>,
+                               gpu_array::tuple<gpu_tuple_record<int&, float&, double&>,
+                                                gpu_tuple_record<const int&, const float&, const double&>>>);
     static_assert(requires(managed_int_jagged& values) {
         values | gpu_array::views::enumerate | gpu_array::views::grid_thread_stride;
     });

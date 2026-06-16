@@ -128,6 +128,10 @@ TEST(StructureOfArrays, RangeTypes)
     using grid_thread_strided_view = decltype(std::declval<managed_soa&>() | gpu_array::views::grid_thread_stride);
     using enumerate_soa_view = gpu_array::enumerate_view<managed_soa>;
     using zip_soa_view = gpu_array::zip_view<managed_soa, managed_soa>;
+    using const_zip_device_soa_view =
+        decltype(gpu_array::views::zip(std::declval<device_soa&>(), std::declval<const device_soa&>()));
+    using const_zip_soa_view =
+        decltype(gpu_array::views::zip(std::declval<managed_soa&>(), std::declval<const managed_soa&>()));
 
     static_assert(std::same_as<typename device_soa::size_type, std::uint32_t>);
     static_assert(std::same_as<typename device_soa::template element_type<1>, float>);
@@ -153,6 +157,12 @@ TEST(StructureOfArrays, RangeTypes)
     static_assert(std::same_as<
                   std::ranges::range_reference_t<zip_soa_view>,
                   gpu_array::tuple<gpu_tuple_record<int&, float&, double&>, gpu_tuple_record<int&, float&, double&>>>);
+    static_assert(std::same_as<std::ranges::range_reference_t<const_zip_device_soa_view>,
+                               gpu_array::tuple<gpu_tuple_record<int&, float&, double&>,
+                                                gpu_tuple_record<const int&, const float&, const double&>>>);
+    static_assert(std::same_as<std::ranges::range_reference_t<const_zip_soa_view>,
+                               gpu_array::tuple<gpu_tuple_record<int&, float&, double&>,
+                                                gpu_tuple_record<const int&, const float&, const double&>>>);
     static_assert(
         requires(managed_soa& values) { values | gpu_array::views::enumerate | gpu_array::views::grid_thread_stride; });
     static_assert(requires(managed_soa& lhs, managed_soa& rhs) {

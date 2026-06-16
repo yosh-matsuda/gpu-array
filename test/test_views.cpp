@@ -16,6 +16,15 @@ namespace
     using grid_thread_view = gpu_array::detail::stride_view<gpu_array::detail::Stride::GridThread, int_array>;
     using enumerate_int_view = gpu_array::enumerate_view<int_array>;
     using zip_int_view = gpu_array::zip_view<int_array, int_array>;
+    using const_enumerate_int_view = decltype(std::declval<const int_array&>() | gpu_array::views::enumerate);
+    using const_zip_int_view =
+        decltype(gpu_array::views::zip(std::declval<int_array&>(), std::declval<const int_array&>()));
+    using const_zip_strided_view =
+        decltype(gpu_array::views::zip(std::declval<int_array&>(), std::declval<const int_array&>()) |
+                 gpu_array::views::grid_thread_stride);
+    using const_zip_then_enumerate_view =
+        decltype(gpu_array::views::zip(std::declval<int_array&>(), std::declval<const int_array&>()) |
+                 gpu_array::views::enumerate);
     using grid_thread_strided_view = decltype(std::declval<int_array&>() | gpu_array::views::grid_thread_stride);
     using zip_then_enumerate_view =
         decltype(gpu_array::views::zip(std::declval<int_array&>(), std::declval<int_array&>()) |
@@ -86,6 +95,10 @@ TEST(EnumerateView, Concepts)
     static_assert(std::ranges::bidirectional_range<enumerate_int_view>);
     static_assert(std::ranges::random_access_range<enumerate_int_view>);
     static_assert(std::same_as<std::ranges::range_value_t<enumerate_int_view>, gpu_array::tuple<std::uint32_t, int>>);
+    static_assert(std::ranges::view<const_enumerate_int_view>);
+    static_assert(std::ranges::random_access_range<const_enumerate_int_view>);
+    static_assert(std::same_as<std::ranges::range_reference_t<const_enumerate_int_view>,
+                               gpu_array::tuple<std::uint32_t, const int&>>);
 
     SUCCEED();
 }
@@ -130,7 +143,35 @@ TEST(ZipView, Concepts)
     static_assert(std::ranges::forward_range<zip_int_view>);
     static_assert(std::same_as<std::ranges::range_value_t<zip_int_view>, gpu_array::tuple<int, int>>);
 
+    static_assert(std::ranges::view<const_zip_int_view>);
+    static_assert(std::same_as<std::ranges::range_reference_t<const_zip_int_view>, gpu_array::tuple<int&, const int&>>);
+    static_assert(
+        std::same_as<std::ranges::range_reference_t<const_zip_strided_view>, gpu_array::tuple<int&, const int&>>);
+    static_assert(std::same_as<std::ranges::range_reference_t<const_zip_then_enumerate_view>,
+                               gpu_array::tuple<std::uint32_t, gpu_array::tuple<int&, const int&>>>);
+    static_assert(
+        std::assignable_from<
+            decltype(gpu_array::get<0>(std::declval<std::ranges::range_reference_t<const_zip_int_view>&>())), int>);
+    static_assert(
+        !std::assignable_from<
+            decltype(gpu_array::get<1>(std::declval<std::ranges::range_reference_t<const_zip_int_view>&>())), int>);
+
     SUCCEED();
+}
+
+TEST(ZipView, ConstRangeReferences)
+{
+    auto lhs = int_array(std::vector<int>{1, 2, 3});
+    auto rhs = int_array(std::vector<int>{10, 20, 30});
+    const auto& const_rhs = rhs;
+
+    for (auto&& [left, right] : gpu_array::views::zip(lhs, const_rhs))
+    {
+        left += right;
+    }
+
+    EXPECT_EQ(lhs.template to<std::vector>(), (std::vector<int>{11, 22, 33}));
+    EXPECT_EQ(rhs.template to<std::vector>(), (std::vector<int>{10, 20, 30}));
 }
 
 TEST(ZipView, ShortestRange)
