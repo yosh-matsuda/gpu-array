@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 project(
   gpu_array
-  VERSION 0.4.2
+  VERSION 0.5.0
   LANGUAGES CXX)
 
 # options
