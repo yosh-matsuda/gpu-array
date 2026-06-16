@@ -124,14 +124,14 @@ namespace gpu_array
             }
             template <class... Us>
             requires (sizeof...(Us) == sizeof...(Ts))
-            __host__ __device__ auto& operator=(const tuple<Us...>& t)
+            __host__ __device__ tuple& operator=(const tuple<Us...>& t)
             {
                 *this = tuple_convert(t, std::index_sequence_for<Ts...>{});
                 return *this;
             }
             template <class... Us>
             requires (sizeof...(Us) == sizeof...(Ts))
-            __host__ __device__ auto& operator=(tuple<Us...>&& t)
+            __host__ __device__ tuple& operator=(tuple<Us...>&& t)
             {
                 *this = tuple_convert(std::move(t), std::index_sequence_for<Ts...>{});
                 return *this;
@@ -155,7 +155,19 @@ namespace gpu_array
             template <class... Us, std::size_t... Is>
             __host__ __device__ static auto tuple_convert(tuple<Us...>&& t, std::index_sequence<Is...>)
             {
-                return tuple<Ts...>{std::move(get<Is>(t))...};
+                return tuple<Ts...>{tuple_convert_element<Ts, Is>(std::move(t))...};
+            }
+            template <class T, std::size_t I, class... Us>
+            __host__ __device__ static decltype(auto) tuple_convert_element(tuple<Us...>&& t)
+            {
+                if constexpr (std::is_lvalue_reference_v<T>)
+                {
+                    return get<I>(t);
+                }
+                else
+                {
+                    return std::move(get<I>(t));
+                }
             }
 
             using base = tuple_impl<std::index_sequence_for<Ts...>, Ts...>;
@@ -198,15 +210,29 @@ namespace gpu_array
         __host__ __device__ decltype(auto) get(tuple<Us...>& t) noexcept
         {
             using leaf = decltype(at_index<I>(t.base_));
-            using reference = std::add_lvalue_reference_t<typename leaf::type>;
-            return static_cast<reference>(static_cast<leaf&>(t.base_).value);
+            if constexpr (std::is_lvalue_reference_v<typename leaf::type>)
+            {
+                return (static_cast<leaf&>(t.base_).value);
+            }
+            else
+            {
+                using reference = std::add_lvalue_reference_t<typename leaf::type>;
+                return static_cast<reference>(static_cast<leaf&>(t.base_).value);
+            }
         }
         template <std::size_t I, class... Us>
         __host__ __device__ decltype(auto) get(const tuple<Us...>& t) noexcept
         {
             using leaf = decltype(at_index<I>(t.base_));
-            using reference = std::add_lvalue_reference_t<std::add_const_t<typename leaf::type>>;
-            return static_cast<reference>(static_cast<const leaf&>(t.base_).value);
+            if constexpr (std::is_lvalue_reference_v<typename leaf::type>)
+            {
+                return (static_cast<const leaf&>(t.base_).value);
+            }
+            else
+            {
+                using reference = std::add_lvalue_reference_t<std::add_const_t<typename leaf::type>>;
+                return static_cast<reference>(static_cast<const leaf&>(t.base_).value);
+            }
         }
         template <std::size_t I, class... Us>
         __host__ __device__ decltype(auto) get(tuple<Us...>&& t) noexcept
