@@ -15,9 +15,9 @@
 namespace
 {
     template <bool Unified, typename SizeType, typename... ValueTypes>
-    class base_probe : public gpu_array::detail::base<Unified, SizeType, ValueTypes...>
+    class base_probe : public gpu_array::detail::owning_storage<Unified, SizeType, ValueTypes...>
     {
-        using base_type = gpu_array::detail::base<Unified, SizeType, ValueTypes...>;
+        using base_type = gpu_array::detail::owning_storage<Unified, SizeType, ValueTypes...>;
 
     public:
         using base_type::empty;

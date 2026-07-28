@@ -441,9 +441,9 @@ namespace gpu_array
             return device_id;
         }
 
-        template <bool Unified, typename SizeType, typename... ValueTypes>
+        template <typename SizeType, typename... ValueTypes>
         requires (sizeof...(ValueTypes) > 0)
-        class base
+        class storage
         {
         public:
             using size_type = SizeType;
@@ -451,18 +451,60 @@ namespace gpu_array
 
             __host__ __device__ size_type size() const noexcept { return size_; }
             __host__ __device__ bool empty() const noexcept { return size_ == 0; }
-            __host__ std::uint32_t use_count() const noexcept
-            {
-                return base::ref_count_ != nullptr ? *base::ref_count_ : 0U;
-            }
 
         protected:
             size_type size_ = 0U;
             gpu_array::tuple<ValueTypes*...> data_;
-            std::uint32_t* ref_count_ = nullptr;  // reference counter, not used on GPU
 
             template <std::size_t N>
             using element_type = std::tuple_element_t<N, gpu_array::tuple<ValueTypes...>>;
+
+            __host__ __device__ storage() : data_(static_cast<ValueTypes*>(nullptr)...) {}
+            __device__ explicit storage(ValueTypes*... ptr, size_type size)
+                : size_(size), data_(static_cast<ValueTypes*>(size != 0 ? ptr : nullptr)...)
+            {
+                assert(size_ == 0 || ((ptr != nullptr) && ...));
+            }
+
+            __host__ __device__ void init()
+            {
+                size_ = 0U;
+                tuple_for_each([](auto*& ptr) { ptr = nullptr; });
+            }
+            __host__ __device__ void tuple_for_each(auto&& f) const
+            {
+                gpu_array::apply([&f](const auto&... args) { (f(args), ...); }, data_);
+            }
+            __host__ __device__ void tuple_for_each(auto&& f)
+            {
+                gpu_array::apply([&f](auto&... args) { (f(args), ...); }, data_);
+            }
+        };
+
+        template <bool Unified, typename SizeType, typename... ValueTypes>
+        requires (sizeof...(ValueTypes) > 0)
+        class owning_storage : protected storage<SizeType, ValueTypes...>
+        {
+            using storage_type = storage<SizeType, ValueTypes...>;
+
+        public:
+            using size_type = SizeType;
+            using difference_type = std::ptrdiff_t;
+            using storage_type::empty;
+            using storage_type::size;
+
+            __host__ std::uint32_t use_count() const noexcept { return ref_count_ != nullptr ? *ref_count_ : 0U; }
+
+        protected:
+            using storage_type::data_;
+            using storage_type::init;
+            using storage_type::size_;
+            using storage_type::tuple_for_each;
+
+            std::uint32_t* ref_count_ = nullptr;  // reference counter, not used on GPU
+
+            template <std::size_t N>
+            using element_type = typename storage_type::template element_type<N>;
 
             __host__ static size_type checked_size(std::size_t size)
             {
@@ -473,19 +515,12 @@ namespace gpu_array
                 return static_cast<size_type>(size);
             }
 
-            __host__ __device__ void init()
-            {
-                size_ = 0U;
-                base::tuple_for_each([](auto*& ptr) { ptr = nullptr; });
-                ref_count_ = nullptr;
-            }
             __host__ void free()
             {
 #ifndef GPU_DEVICE_COMPILE
                 assert((size_ == 0) == (ref_count_ == nullptr));
                 if (ref_count_ == nullptr) return;
 
-                // delete objects
                 if (--*ref_count_ == 0)
                 {
 #if defined(GPU_ARRAY_DEBUG)
@@ -493,20 +528,17 @@ namespace gpu_array
                               << ", size: " << size_ << ", refcount: " << *ref_count_ << '\n';
 #endif
 
-                    // do not throw in destructor
                     try
                     {
                         if constexpr (Unified)
                         {
-                            // call destructor explicitly for unified memory
-                            base::tuple_for_each([this](auto* ptr) { std::destroy_n(ptr, size_); });
+                            tuple_for_each([this](auto* ptr) { std::destroy_n(ptr, size_); });
                         }
 
-                        base::tuple_for_each([](auto* ptr) { GPU_CHECK_ERROR(api::gpuFree(ptr)); });
-                        (DECR_GPU_MEMORY_USAGE(sizeof(ValueTypes) * size_), ...);  // for debug
+                        tuple_for_each([](auto* ptr) { GPU_CHECK_ERROR(api::gpuFree(ptr)); });
+                        (DECR_GPU_MEMORY_USAGE(sizeof(ValueTypes) * size_), ...);
 
 #ifndef _CLANGD
-                        // clangd crashes with this code
                         delete ref_count_;
 #endif
                     }
@@ -522,12 +554,12 @@ namespace gpu_array
                     }
                 }
 
-                // init variables
                 init();
+                ref_count_ = nullptr;
 #endif
             }
 
-            __host__ __device__ base& operator=(const base& r)
+            __host__ __device__ owning_storage& operator=(const owning_storage& r)
             {
                 if (this == &r) return *this;
 
@@ -550,7 +582,7 @@ namespace gpu_array
 #endif
                 return *this;
             }
-            __host__ __device__ base& operator=(base&& r) noexcept
+            __host__ __device__ owning_storage& operator=(owning_storage&& r) noexcept
             {
                 if (this == &r) return *this;
 
@@ -563,11 +595,13 @@ namespace gpu_array
                 ref_count_ = r.ref_count_;
 
                 r.init();
+                r.ref_count_ = nullptr;
                 return *this;
             }
 
-            __host__ __device__ base() : data_(static_cast<ValueTypes*>(nullptr)...) {};
-            __host__ __device__ base(const base& r) : size_(r.size_), data_(r.data_), ref_count_(r.ref_count_)
+            __host__ __device__ owning_storage() {}
+            __host__ __device__ owning_storage(const owning_storage& r)
+                : storage_type(static_cast<const storage_type&>(r)), ref_count_(r.ref_count_)
             {
 #ifndef GPU_DEVICE_COMPILE
                 if (ref_count_ != nullptr)
@@ -580,59 +614,46 @@ namespace gpu_array
                 }
 #endif
             }
-            __host__ __device__ base(base&& r) noexcept : size_(r.size_), data_(r.data_), ref_count_(r.ref_count_)
+            __host__ __device__ owning_storage(owning_storage&& r) noexcept
+                : storage_type(std::move(static_cast<storage_type&>(r))), ref_count_(r.ref_count_)
             {
                 r.init();
+                r.ref_count_ = nullptr;
             }
-            __device__ explicit base(ValueTypes*... ptr, size_type size)
-                : size_(size), data_(static_cast<ValueTypes*>(size != 0 ? ptr : nullptr)...)
+            __device__ explicit owning_storage(ValueTypes*... ptr, size_type size) : storage_type(ptr..., size) {}
+            __host__ explicit owning_storage(std::size_t size) : storage_type()
             {
-                assert(size_ == 0 || ((ptr != nullptr) && ...));
-            }
-            __host__ explicit base(std::size_t size)
-                : size_(checked_size(size)),
-                  data_(static_cast<ValueTypes*>(nullptr)...),
-                  ref_count_(size_ == 0 ? nullptr : new std::uint32_t(1))
-            {
-                // called from derived class constructor
-                (INCR_GPU_MEMORY_USAGE(sizeof(ValueTypes) * size_), ...);  // for debug
+                size_ = checked_size(size);
+                ref_count_ = size_ == 0 ? nullptr : new std::uint32_t(1);
+                (INCR_GPU_MEMORY_USAGE(sizeof(ValueTypes) * size_), ...);
             }
 #ifndef GPU_DEVICE_COMPILE
-            __host__ ~base() { free(); }
+            __host__ ~owning_storage() { free(); }
 #endif
-
-            __host__ __device__ void tuple_for_each(auto&& f) const
-            {
-                gpu_array::apply([&f](const auto&... args) { (f(args), ...); }, data_);
-            }
-            __host__ __device__ void tuple_for_each(auto&& f)
-            {
-                gpu_array::apply([&f](auto&... args) { (f(args), ...); }, data_);
-            }
         };
 
         template <bool Unified, typename SizeType, typename... ValueType>
-        constexpr void is_ptr_helper(const detail::base<Unified, SizeType, ValueType...>&)
+        constexpr void is_ptr_helper(const detail::owning_storage<Unified, SizeType, ValueType...>&)
         {
         }
         template <typename SizeType, typename... ValueType>
-        constexpr void is_managed_ptr_helper(const detail::base<true, SizeType, ValueType...>&)
+        constexpr void is_managed_ptr_helper(const detail::owning_storage<true, SizeType, ValueType...>&)
         {
         }
         template <typename SizeType, typename... ValueType>
-        constexpr void is_unmanaged_ptr_helper(const detail::base<false, SizeType, ValueType...>&)
+        constexpr void is_unmanaged_ptr_helper(const detail::owning_storage<false, SizeType, ValueType...>&)
         {
         }
         template <bool Unified, typename SizeType, typename ValueType>
-        constexpr void is_array_helper(const detail::base<Unified, SizeType, ValueType>&)
+        constexpr void is_array_helper(const detail::owning_storage<Unified, SizeType, ValueType>&)
         {
         }
         template <typename ValueType, typename SizeType>
-        constexpr void is_managed_array_helper(const detail::base<true, SizeType, ValueType>&)
+        constexpr void is_managed_array_helper(const detail::owning_storage<true, SizeType, ValueType>&)
         {
         }
         template <typename ValueType, typename SizeType>
-        constexpr void is_unmanaged_array_helper(const detail::base<false, SizeType, ValueType>&)
+        constexpr void is_unmanaged_array_helper(const detail::owning_storage<false, SizeType, ValueType>&)
         {
         }
 
@@ -725,9 +746,9 @@ namespace gpu_array
 
     template <typename ValueType, typename SizeType>
     requires std::is_trivially_copyable_v<ValueType>
-    class array : public detail::base<false, SizeType, ValueType>
+    class array : public detail::owning_storage<false, SizeType, ValueType>
     {
-        using base = detail::base<false, SizeType, ValueType>;
+        using base = detail::owning_storage<false, SizeType, ValueType>;
 
     public:
         using size_type = SizeType;
@@ -1093,9 +1114,9 @@ namespace gpu_array
     };
 
     template <typename ValueType, typename SizeType>
-    class managed_array : public detail::base<true, SizeType, ValueType>
+    class managed_array : public detail::owning_storage<true, SizeType, ValueType>
     {
-        using base = detail::base<true, SizeType, ValueType>;
+        using base = detail::owning_storage<true, SizeType, ValueType>;
         static constexpr auto has_prefetch =
             requires(const ValueType& a, int device_id, api::gpuStream_t s) { a.prefetch(device_id, s); };
         static constexpr auto has_mem_advise = requires(const ValueType& a, api::gpuMemoryAdvise advise,
@@ -1460,9 +1481,9 @@ namespace gpu_array
 
     template <typename ValueType>
     requires std::is_trivially_copyable_v<ValueType>
-    class value : protected detail::base<false, std::uint32_t, ValueType>
+    class value : protected detail::owning_storage<false, std::uint32_t, ValueType>
     {
-        using base = detail::base<false, std::uint32_t, ValueType>;
+        using base = detail::owning_storage<false, std::uint32_t, ValueType>;
         using value_type = ValueType;
         using reference = value_type&;
         using pointer = value_type*;
@@ -1588,9 +1609,9 @@ namespace gpu_array
     };
 
     template <typename ValueType>
-    class managed_value : protected detail::base<true, std::uint32_t, ValueType>
+    class managed_value : protected detail::owning_storage<true, std::uint32_t, ValueType>
     {
-        using base = detail::base<true, std::uint32_t, ValueType>;
+        using base = detail::owning_storage<true, std::uint32_t, ValueType>;
         using value_type = ValueType;
         using reference = value_type&;
         using pointer = value_type*;
@@ -1947,10 +1968,10 @@ namespace gpu_array
     requires (sizeof...(Ts) > 0) && std::constructible_from<Tuple<Ts...>, const Ts&...> &&
              std::constructible_from<Tuple<Ts&...>, Ts&...> &&
              std::constructible_from<Tuple<const Ts&...>, const Ts&...> && (std::is_trivially_copyable_v<Ts> && ...)
-    class structure_of_arrays<Tuple<Ts...>, SizeType> : public detail::base<false, SizeType, Ts...>
+    class structure_of_arrays<Tuple<Ts...>, SizeType> : public detail::owning_storage<false, SizeType, Ts...>
     {
         static constexpr auto num_arrays = sizeof...(Ts);
-        using base = detail::base<false, SizeType, Ts...>;
+        using base = detail::owning_storage<false, SizeType, Ts...>;
 
         using tuple_value_type = gpu_array::tuple<Ts...>;
         using tuple_pointer_type = gpu_array::tuple<Ts*...>;
@@ -2288,10 +2309,10 @@ namespace gpu_array
     requires (sizeof...(Ts) > 0) && std::constructible_from<Tuple<Ts...>, const Ts&...> &&
              std::constructible_from<Tuple<Ts&...>, Ts&...> &&
              std::constructible_from<Tuple<const Ts&...>, const Ts&...>
-    class managed_structure_of_arrays<Tuple<Ts...>, SizeType> : public detail::base<true, SizeType, Ts...>
+    class managed_structure_of_arrays<Tuple<Ts...>, SizeType> : public detail::owning_storage<true, SizeType, Ts...>
     {
         static constexpr auto num_arrays = sizeof...(Ts);
-        using base = detail::base<true, SizeType, Ts...>;
+        using base = detail::owning_storage<true, SizeType, Ts...>;
 
         using tuple_value_type = gpu_array::tuple<Ts...>;
         using tuple_pointer_type = gpu_array::tuple<Ts*...>;
