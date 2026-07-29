@@ -251,6 +251,24 @@ Where:
 3.  Wrapper for `cudaMemAdvise/hipMemAdvise` to set memory advice for unified memory. The former overload sets advice for a memory range, while the latter overload sets advice for the entire memory. Overloads without `device_id` use the current device. If `recursive` is true and the value type of the array has `mem_advise(...)` function, mem_advise is called recursively for nested or member arrays.
 4.  Host memory advice overloads with similar behavior to (3).
 
+### View factories
+
+`array` and `managed_array` create non-owning views without allocating memory or changing the use count:
+
+```cpp
+__host__ __device__ array_view<T, size_type> view() & noexcept;
+__host__ __device__ const_array_view<T, size_type> view() const& noexcept;
+__host__ __device__ array_view<T, size_type> view(size_type offset, size_type count) & noexcept;
+__host__ __device__ const_array_view<T, size_type> view(size_type offset, size_type count) const& noexcept;
+
+__host__ __device__ managed_array_view<T, size_type> view() & noexcept;
+__host__ __device__ const_managed_array_view<T, size_type> view() const& noexcept;
+__host__ __device__ managed_array_view<T, size_type> view(size_type offset, size_type count) & noexcept;
+__host__ __device__ const_managed_array_view<T, size_type> view(size_type offset, size_type count) const& noexcept;
+```
+
+The sliced overloads assert `offset <= size()` and `count <= size() - offset`. They are available only on lvalue owners: the corresponding rvalue overloads are deleted so a view cannot be created from a temporary owner. See [Views](#views) for ownership and range semantics.
+
 ## `value` / `managed_value`
 
 ```cpp
@@ -652,6 +670,119 @@ Where:
 2.  Host memory prefetching overloads with similar behavior to (1).
 3.  Wrapper for `cudaMemAdvise/hipMemAdvise` to set memory advice for unified memory. The former overload sets advice for a memory range, while the latter overload sets advice for the entire memory. Overloads without `device_id` use the current device. If `recursive` is true and the value type of the array has `mem_advise(...)` function, mem_advise is called recursively for nested or member arrays.
 4.  Host memory advice overloads with similar behavior to (3).
+
+### View factories
+
+`structure_of_arrays` and `managed_structure_of_arrays` create non-owning views without allocating memory or changing the use count:
+
+```cpp
+__host__ __device__ structure_of_arrays_view<Tuple<Ts...>, size_type> view() & noexcept;
+__host__ __device__ const_structure_of_arrays_view<Tuple<Ts...>, size_type> view() const& noexcept;
+__host__ __device__ structure_of_arrays_view<Tuple<Ts...>, size_type>
+view(size_type offset, size_type count) & noexcept;
+__host__ __device__ const_structure_of_arrays_view<Tuple<Ts...>, size_type>
+view(size_type offset, size_type count) const& noexcept;
+
+__host__ __device__ managed_structure_of_arrays_view<Tuple<Ts...>, size_type> view() & noexcept;
+__host__ __device__ const_managed_structure_of_arrays_view<Tuple<Ts...>, size_type> view() const& noexcept;
+__host__ __device__ managed_structure_of_arrays_view<Tuple<Ts...>, size_type>
+view(size_type offset, size_type count) & noexcept;
+__host__ __device__ const_managed_structure_of_arrays_view<Tuple<Ts...>, size_type>
+view(size_type offset, size_type count) const& noexcept;
+```
+
+The sliced overloads assert `offset <= size()` and `count <= size() - offset`, then apply the offset to every component pointer. They are available only on lvalue owners; rvalue overloads are deleted to prevent dangling views. See [Views](#views) for ownership and range semantics.
+
+## Views
+
+Views are lightweight, non-owning pointer-and-size ranges. They do not retain an allocation, increment its use count, or free it. A view remains valid only while the allocation it references remains valid; destroying, freeing, or resetting the last owning wrapper invalidates every view into that allocation. Unlike owning wrappers on the host, all public view types model `std::ranges::borrowed_range`.
+
+Zero-length views normalize their stored pointer or component pointers to null. A default-constructed view is therefore empty with null pointer storage. Sliced factories and direct constructors preserve this convention.
+
+All public view types provide `size()`, `empty()`, boolean conversion, random-access iteration, element access, and `to<T>()`. `to<T>()` materializes a copy; it never transfers ownership of the viewed allocation. Mutable view types expose mutable references, while `const_` variants expose const references and cannot be used as output ranges.
+
+### Flat views
+
+```cpp
+template <typename T, typename SizeType = size_type_default>
+requires std::is_trivially_copyable_v<T>
+using array_view = /* device-memory mutable view */;
+
+template <typename T, typename SizeType = size_type_default>
+requires std::is_trivially_copyable_v<T>
+using const_array_view = /* device-memory const view */;
+
+template <typename T, typename SizeType = size_type_default>
+using managed_array_view = /* unified-memory mutable view */;
+
+template <typename T, typename SizeType = size_type_default>
+using const_managed_array_view = /* unified-memory const view */;
+```
+
+`array_view` and `const_array_view` reference device-only memory. On the host, use `to<T>()` to materialize their elements rather than dereferencing device pointers. `managed_array_view` and `const_managed_array_view` reference unified memory, so their elements are directly accessible from both host and device code.
+
+Views can be built from a raw pointer and size, or obtained through an owner's `view()` factory. For nonempty views, host raw-pointer construction checks `gpuPointerGetAttributes`: device views require device memory and managed views require unified memory. Device constructors do not perform this runtime query; callers must provide a pointer of the correct memory kind.
+
+```cpp
+auto values = gpu_array::managed_array<int>{1, 2, 3, 4};
+auto middle = values.view(1, 2);  // {2, 3}; non-owning
+
+for (auto&& [index, value] : middle | gpu_array::views::enumerate |
+                               gpu_array::views::grid_thread_stride)
+{
+    value += static_cast<int>(index);  // indices are relative to middle
+}
+
+auto host_copy = middle.to<std::vector>();
+```
+
+Managed flat views expose the same `prefetch`, `prefetch_to_cpu`, `mem_advise`, and `mem_advise_to_cpu` operations as `managed_array`. These operations apply only to the viewed range.
+
+### Structure-of-arrays views
+
+```cpp
+template <typename Tuple, typename SizeType = size_type_default>
+using structure_of_arrays_view = /* device-memory mutable SoA view */;
+template <typename Tuple, typename SizeType = size_type_default>
+using const_structure_of_arrays_view = /* device-memory const SoA view */;
+template <typename Tuple, typename SizeType = size_type_default>
+using managed_structure_of_arrays_view = /* unified-memory mutable SoA view */;
+template <typename Tuple, typename SizeType = size_type_default>
+using const_managed_structure_of_arrays_view = /* unified-memory const SoA view */;
+```
+
+An SoA view stores a size and one pointer for each `Tuple` component. `data<N>()` returns the pointer for component `N`; indexing and iteration produce tuple-shaped references such as `Tuple<Ts&...>` or `Tuple<const Ts&...>`. A slice offsets every component pointer by the same element count.
+
+For nonempty views, host raw-pointer construction validates every component pointer against the selected memory kind. Device constructors omit that runtime validation, so the caller is responsible for providing matching device or unified component pointers.
+
+```cpp
+using record = gpu_array::tuple<int, float>;
+auto positions = gpu_array::managed_structure_of_arrays<record>(source_records);
+auto destination = gpu_array::managed_structure_of_arrays<record>(other_records);
+
+auto left = positions.view(4, 32);
+auto right = destination.view(4, 32);
+for (auto&& [position, update] : gpu_array::views::zip(left, right) |
+                                  gpu_array::views::grid_thread_stride)
+{
+    gpu_array::get<0>(position) += gpu_array::get<0>(update);
+}
+```
+
+Managed SoA views expose the same `prefetch`, `prefetch_to_cpu`, `mem_advise`, and `mem_advise_to_cpu` operations as `managed_structure_of_arrays`. With `recursive == true`, these operations are forwarded to component values that support the corresponding operation.
+
+### Adaptor composition
+
+Views compose with the existing `gpu_array::views::enumerate`, `gpu_array::views::zip`, and grid-stride adaptors. Call `view(offset, count)` before the adaptor pipeline when a range slice is needed; gpu-array intentionally does not provide a separate slicing adaptor.
+
+```cpp
+auto window = values.view(offset, count);
+for (auto&& [index, value] : window | gpu_array::views::enumerate |
+                               gpu_array::views::grid_thread_stride)
+{
+    // index is in [0, count), not the owner's original index.
+}
+```
 
 ## `jagged_array`
 
