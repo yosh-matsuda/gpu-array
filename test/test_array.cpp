@@ -308,8 +308,8 @@ TEST(ArrayViewPreparation, MaterializesNestedManagedViews)
 {
     const auto expected = std::vector<std::vector<int>>{{1, 2, 3}, {4}, {}, {5, 6}};
     auto source = gpu_array::managed_array(expected);
-    auto view = gpu_array::managed_array_view<gpu_array::managed_array<int>, std::uint32_t>(source.data(),
-                                                                                               source.size());
+    auto view =
+        gpu_array::managed_array_view<gpu_array::managed_array<int>, std::uint32_t>(source.data(), source.size());
 
     static_assert(gpu_array::detail::gpu_managed_random_access_range<decltype(view)>);
     static_assert(std::same_as<decltype(view.template to<std::vector>()), std::vector<std::vector<int>>>);
@@ -327,10 +327,10 @@ TEST(ArrayViewPreparation, ConstViewTypesAndMaterialization)
     static_assert(std::same_as<std::ranges::range_value_t<const_view>, int>);
     static_assert(std::same_as<std::ranges::range_reference_t<const_view>, const int&>);
     static_assert(!std::ranges::output_range<const_view, int>);
-    static_assert(std::same_as<decltype(std::declval<const const_view&>().template to<std::vector>()),
-                               std::vector<int>>);
-    static_assert(std::same_as<decltype(std::declval<const const_view&>().template to<std::vector<long>>()),
-                               std::vector<long>>);
+    static_assert(
+        std::same_as<decltype(std::declval<const const_view&>().template to<std::vector>()), std::vector<int>>);
+    static_assert(
+        std::same_as<decltype(std::declval<const const_view&>().template to<std::vector<long>>()), std::vector<long>>);
 
     const auto source = managed_int_array{2, 3, 5, 7};
     const auto view = const_view(source.data(), source.size());
@@ -389,15 +389,15 @@ TEST(ArrayView, AdaptorIntegration)
     using managed_view = gpu_array::managed_array_view<int, std::uint32_t>;
     using const_managed_view = gpu_array::const_managed_array_view<int, std::uint32_t>;
 
-    static_assert(requires(managed_view values) {
-        values | gpu_array::views::enumerate | gpu_array::views::grid_thread_stride;
-    });
+    static_assert(
+        requires(managed_view values) { values | gpu_array::views::enumerate | gpu_array::views::grid_thread_stride; });
     static_assert(requires(device_view lhs, const device_view rhs) {
         gpu_array::views::zip(lhs, rhs) | gpu_array::views::grid_thread_stride;
     });
-    static_assert(std::same_as<std::ranges::range_reference_t<decltype(
-                                   std::declval<const_managed_view>() | gpu_array::views::enumerate)>,
-                               gpu_array::tuple<std::uint32_t, const int&>>);
+    static_assert(
+        std::same_as<
+            std::ranges::range_reference_t<decltype(std::declval<const_managed_view>() | gpu_array::views::enumerate)>,
+            gpu_array::tuple<std::uint32_t, const int&>>);
 
     auto values = managed_int_array{1, 2, 3, 4};
     auto view = values.view(1, 2);

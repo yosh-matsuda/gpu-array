@@ -286,8 +286,7 @@ TEST(StructureOfArraysViewKernel, ComposesWithAdaptors)
     gpu_array_test::launch_input_range<enumerate_stride_view_kernel<decltype(view)>>({2}, {2}, view);
     synchronize();
 
-    expect_records_eq(copy_member_arrays<record>(records),
-                      {source[0], source[1], record{13, 6.5F, 6.75}, source[3]});
+    expect_records_eq(copy_member_arrays<record>(records), {source[0], source[1], record{13, 6.5F, 6.75}, source[3]});
 }
 
 TEST(ManagedStructureOfArraysKernel, GridThreadStrideView)

@@ -866,11 +866,11 @@ namespace gpu_array
             }
 
             template <array_convertible T>
-                        requires std::same_as<element_type, std::ranges::range_value_t<T>> &&
+            requires std::same_as<element_type, std::ranges::range_value_t<T>> &&
                      ((std::ranges::contiguous_range<T> &&
                        (std::is_constructible_v<T, SizeType> || std::is_default_constructible_v<T>)) ||
                       (std::is_default_constructible_v<T> &&
-                                             requires { std::declval<T>().push_back(std::declval<element_type>()); }))
+                       requires { std::declval<T>().push_back(std::declval<element_type>()); }))
             __host__ T to() const
             {
                 const auto& value = derived();
@@ -1265,47 +1265,40 @@ namespace gpu_array
         class basic_array_view
             : protected storage<SizeType, std::conditional_t<Const, const ValueType, ValueType>>,
               public memory_kind<Unified>,
-              public array_access_interface<basic_array_view<ValueType, SizeType, Unified, Const>, ValueType,
-                                            SizeType, Const>,
-              public std::conditional_t<Unified,
-                                        managed_array_conversion_interface<
-                                            basic_array_view<ValueType, SizeType, Unified, Const>, ValueType,
-                                            SizeType>,
-                                        device_array_conversion_interface<
-                                            basic_array_view<ValueType, SizeType, Unified, Const>, ValueType,
-                                            SizeType>>,
-              public std::conditional_t<Unified,
-                                        managed_memory_interface<basic_array_view<ValueType, SizeType, Unified, Const>,
-                                                                 SizeType>,
-                                        empty_interface>
+              public array_access_interface<basic_array_view<ValueType, SizeType, Unified, Const>, ValueType, SizeType,
+                                            Const>,
+              public std::conditional_t<
+                  Unified,
+                  managed_array_conversion_interface<basic_array_view<ValueType, SizeType, Unified, Const>, ValueType,
+                                                     SizeType>,
+                  device_array_conversion_interface<basic_array_view<ValueType, SizeType, Unified, Const>, ValueType,
+                                                    SizeType>>,
+              public std::conditional_t<
+                  Unified, managed_memory_interface<basic_array_view<ValueType, SizeType, Unified, Const>, SizeType>,
+                  empty_interface>
         {
             using storage_base = storage<SizeType, std::conditional_t<Const, const ValueType, ValueType>>;
-            using access =
-                array_access_interface<basic_array_view<ValueType, SizeType, Unified, Const>, ValueType, SizeType,
-                                       Const>;
+            using access = array_access_interface<basic_array_view<ValueType, SizeType, Unified, Const>, ValueType,
+                                                  SizeType, Const>;
             using managed_memory =
                 managed_memory_interface<basic_array_view<ValueType, SizeType, Unified, Const>, SizeType>;
 
             friend managed_memory;
 
-            static constexpr auto has_prefetch =
-                requires(const ValueType& value, int device_id, api::gpuStream_t stream) {
-                    value.prefetch(device_id, stream);
-                };
-            static constexpr auto has_mem_advise =
-                requires(const ValueType& value, api::gpuMemoryAdvise advise, int device_id) {
-                    value.mem_advise(advise, device_id);
-                };
+            static constexpr auto has_prefetch = requires(
+                const ValueType& value, int device_id, api::gpuStream_t stream) { value.prefetch(device_id, stream); };
+            static constexpr auto has_mem_advise = requires(const ValueType& value, api::gpuMemoryAdvise advise,
+                                                            int device_id) { value.mem_advise(advise, device_id); };
 
         public:
+            using storage_base::empty;
+            using storage_base::size;
             using typename access::const_pointer;
             using typename access::const_reference;
             using typename access::pointer;
             using typename access::reference;
             using typename access::size_type;
             using typename access::value_type;
-            using storage_base::empty;
-            using storage_base::size;
 
             basic_array_view() = default;
 
@@ -1422,7 +1415,7 @@ namespace gpu_array
                                                      detail::validated_view_tag{});
         }
         __host__ __device__ const_array_view<value_type, size_type> view(size_type offset,
-                                                                           size_type count) const& noexcept
+                                                                         size_type count) const& noexcept
         {
             assert(offset <= base::size() && count <= base::size() - offset);
             return const_array_view<value_type, size_type>(data() == nullptr ? nullptr : data() + offset, count,
@@ -1632,11 +1625,10 @@ namespace gpu_array
                                                              detail::validated_view_tag{});
         }
         __host__ __device__ const_managed_array_view<value_type, size_type> view(size_type offset,
-                                                                                   size_type count) const& noexcept
+                                                                                 size_type count) const& noexcept
         {
             assert(offset <= base::size() && count <= base::size() - offset);
-            return const_managed_array_view<value_type, size_type>(data() == nullptr ? nullptr : data() + offset,
-                                                                   count,
+            return const_managed_array_view<value_type, size_type>(data() == nullptr ? nullptr : data() + offset, count,
                                                                    detail::validated_view_tag{});
         }
         __host__ __device__ managed_array_view<value_type, size_type> view() && = delete;
@@ -2346,26 +2338,25 @@ namespace gpu_array
 
         template <template <typename...> typename Tuple, typename SizeType, bool Unified, bool Const, typename... Ts>
         requires (sizeof...(Ts) > 0) && std::constructible_from<Tuple<Ts...>, const Ts&...> &&
-                 std::constructible_from<Tuple<Ts&...>, Ts&...> &&
-                 std::constructible_from<Tuple<const Ts&...>, const Ts&...> &&
-                 (Unified || (std::is_trivially_copyable_v<Ts> && ...))
+                     std::constructible_from<Tuple<Ts&...>, Ts&...> &&
+                     std::constructible_from<Tuple<const Ts&...>, const Ts&...> &&
+                     (Unified || (std::is_trivially_copyable_v<Ts> && ...))
         class basic_structure_of_arrays_view
             : protected storage<SizeType, std::conditional_t<Const, const Ts, Ts>...>,
               public memory_kind<Unified>,
-              public soa_access_interface<basic_structure_of_arrays_view<Tuple, SizeType, Unified, Const, Ts...>,
-                                          Tuple, SizeType, Const, Ts...>,
-              public std::conditional_t<Unified,
-                                        managed_memory_interface<
-                                            basic_structure_of_arrays_view<Tuple, SizeType, Unified, Const, Ts...>,
-                                            SizeType>,
-                                        empty_interface>,
+              public soa_access_interface<basic_structure_of_arrays_view<Tuple, SizeType, Unified, Const, Ts...>, Tuple,
+                                          SizeType, Const, Ts...>,
+              public std::conditional_t<
+                  Unified,
+                  managed_memory_interface<basic_structure_of_arrays_view<Tuple, SizeType, Unified, Const, Ts...>,
+                                           SizeType>,
+                  empty_interface>,
               public soa_conversion_interface<basic_structure_of_arrays_view<Tuple, SizeType, Unified, Const, Ts...>,
                                               Tuple, SizeType, !Unified, Ts...>
         {
             using storage_base = storage<SizeType, std::conditional_t<Const, const Ts, Ts>...>;
-            using access =
-                soa_access_interface<basic_structure_of_arrays_view<Tuple, SizeType, Unified, Const, Ts...>, Tuple,
-                                     SizeType, Const, Ts...>;
+            using access = soa_access_interface<basic_structure_of_arrays_view<Tuple, SizeType, Unified, Const, Ts...>,
+                                                Tuple, SizeType, Const, Ts...>;
             using managed_memory =
                 managed_memory_interface<basic_structure_of_arrays_view<Tuple, SizeType, Unified, Const, Ts...>,
                                          SizeType>;
@@ -2380,20 +2371,20 @@ namespace gpu_array
                                                             int device_id) { value.mem_advise(advise, device_id); };
 
         public:
+            using storage_base::empty;
+            using storage_base::size;
             using typename access::const_iterator;
             using typename access::const_reference;
             using typename access::iterator;
             using typename access::reference;
             using typename access::size_type;
             using typename access::value_type;
-            using storage_base::empty;
-            using storage_base::size;
 
             basic_structure_of_arrays_view() = default;
 
 #if defined(GPU_OVERLOAD_HOST)
             __host__ basic_structure_of_arrays_view(std::conditional_t<Const, const Ts*, Ts*>... pointers,
-                                                     std::size_t size)
+                                                    std::size_t size)
                 : storage_base(pointers..., checked_view_size<SizeType>(size))
             {
                 validate_soa_view_pointers<Unified>(size, pointers...);
@@ -2401,7 +2392,7 @@ namespace gpu_array
 #endif
 #if defined(GPU_OVERLOAD_DEVICE)
             __device__ basic_structure_of_arrays_view(std::conditional_t<Const, const Ts*, Ts*>... pointers,
-                                                       size_type size)
+                                                      size_type size)
                 : storage_base(pointers..., size)
             {
             }
@@ -2420,7 +2411,7 @@ namespace gpu_array
             __host__ __device__ explicit operator bool() const noexcept { return !empty(); }
 
             __host__ __device__ basic_structure_of_arrays_view(std::conditional_t<Const, const Ts*, Ts*>... pointers,
-                                                                 size_type size, validated_view_tag)
+                                                               size_type size, validated_view_tag)
                 : storage_base(pointers..., size)
             {
             }
@@ -2437,7 +2428,8 @@ namespace gpu_array
                     if constexpr (has_prefetch<T>)
                     {
                         if (recursive)
-                            for (auto index = n; index < n + length; ++index) pointer[index].prefetch(device_id, stream);
+                            for (auto index = n; index < n + length; ++index)
+                                pointer[index].prefetch(device_id, stream);
                     }
                 });
             }
@@ -2481,7 +2473,8 @@ namespace gpu_array
     }  // namespace detail
 
     template <typename Tuple, typename SizeType = size_type_default>
-    using structure_of_arrays_view = typename detail::structure_of_arrays_view_type<Tuple, SizeType, false, false>::type;
+    using structure_of_arrays_view =
+        typename detail::structure_of_arrays_view_type<Tuple, SizeType, false, false>::type;
     template <typename Tuple, typename SizeType = size_type_default>
     using const_structure_of_arrays_view =
         typename detail::structure_of_arrays_view_type<Tuple, SizeType, false, true>::type;
@@ -2524,8 +2517,8 @@ namespace gpu_array
                  std::constructible_from<Tuple<const Ts&...>, const Ts&...> && (std::is_trivially_copyable_v<Ts> && ...)
     class structure_of_arrays<Tuple<Ts...>, SizeType>
         : public detail::owning_storage<false, SizeType, Ts...>,
-                    public detail::soa_access_interface<structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType, false,
-                                                                                            Ts...>,
+          public detail::soa_access_interface<structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType, false,
+                                              Ts...>,
           public detail::soa_conversion_interface<structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType, true,
                                                   Ts...>
     {
@@ -2570,7 +2563,7 @@ namespace gpu_array
         }
         template <std::size_t... Ns>
         __host__ __device__ const_view_type make_view(size_type offset, size_type count,
-                                                       std::index_sequence<Ns...>) const noexcept
+                                                      std::index_sequence<Ns...>) const noexcept
         {
             return const_view_type((data<Ns>() == nullptr ? nullptr : data<Ns>() + offset)..., count,
                                    detail::validated_view_tag{});
@@ -2816,7 +2809,7 @@ namespace gpu_array
     class managed_structure_of_arrays<Tuple<Ts...>, SizeType>
         : public detail::owning_storage<true, SizeType, Ts...>,
           public detail::soa_access_interface<managed_structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType,
-                                                                                            false, Ts...>,
+                                              false, Ts...>,
           public detail::managed_memory_interface<managed_structure_of_arrays<Tuple<Ts...>, SizeType>, SizeType>,
           public detail::soa_conversion_interface<managed_structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType,
                                                   false, Ts...>
@@ -2871,9 +2864,8 @@ namespace gpu_array
         }
 
     public:
-        using access =
-            detail::soa_access_interface<managed_structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType, false,
-                                         Ts...>;
+        using access = detail::soa_access_interface<managed_structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple,
+                                                    SizeType, false, Ts...>;
         using typename access::size_type;
         template <std::size_t N>
         using element_type = std::tuple_element_t<N, tuple_value_type>;
@@ -2898,7 +2890,7 @@ namespace gpu_array
         }
         template <std::size_t... Ns>
         __host__ __device__ const_view_type make_view(size_type offset, size_type count,
-                                                       std::index_sequence<Ns...>) const noexcept
+                                                      std::index_sequence<Ns...>) const noexcept
         {
             return const_view_type((data<Ns>() == nullptr ? nullptr : data<Ns>() + offset)..., count,
                                    detail::validated_view_tag{});
@@ -4317,8 +4309,8 @@ inline constexpr bool std::ranges::enable_view<gpu_array::array<Ts...>> = true;
 template <typename... Ts>
 inline constexpr bool std::ranges::enable_view<gpu_array::managed_array<Ts...>> = true;
 template <typename ValueType, typename SizeType, bool Unified, bool Const>
-inline constexpr bool std::ranges::enable_view<gpu_array::detail::basic_array_view<ValueType, SizeType, Unified,
-                                                                                     Const>> = true;
+inline constexpr bool
+    std::ranges::enable_view<gpu_array::detail::basic_array_view<ValueType, SizeType, Unified, Const>> = true;
 template <template <typename...> typename Tuple, typename SizeType, bool Unified, bool Const, typename... Ts>
 inline constexpr bool std::ranges::enable_view<
     gpu_array::detail::basic_structure_of_arrays_view<Tuple, SizeType, Unified, Const, Ts...>> = true;
@@ -4335,8 +4327,8 @@ template <typename... Ts>
 inline constexpr bool std::ranges::enable_borrowed_range<gpu_array::managed_array<Ts...>> = true;
 #endif
 template <typename ValueType, typename SizeType, bool Unified, bool Const>
-inline constexpr bool std::ranges::enable_borrowed_range<gpu_array::detail::basic_array_view<ValueType, SizeType,
-                                                                                               Unified, Const>> = true;
+inline constexpr bool
+    std::ranges::enable_borrowed_range<gpu_array::detail::basic_array_view<ValueType, SizeType, Unified, Const>> = true;
 template <template <typename...> typename Tuple, typename SizeType, bool Unified, bool Const, typename... Ts>
 inline constexpr bool std::ranges::enable_borrowed_range<
     gpu_array::detail::basic_structure_of_arrays_view<Tuple, SizeType, Unified, Const, Ts...>> = true;

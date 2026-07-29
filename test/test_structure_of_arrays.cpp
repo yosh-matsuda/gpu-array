@@ -227,16 +227,15 @@ TEST(StructureOfArrays, RangeTypes)
     static_assert(requires(managed_soa& lhs, managed_soa& rhs) {
         gpu_array::views::zip(lhs, rhs) | gpu_array::views::grid_thread_stride;
     });
-    static_assert(requires(managed_view values) {
-        values | gpu_array::views::enumerate | gpu_array::views::grid_thread_stride;
-    });
+    static_assert(
+        requires(managed_view values) { values | gpu_array::views::enumerate | gpu_array::views::grid_thread_stride; });
     static_assert(requires(device_view lhs, const device_view rhs) {
         gpu_array::views::zip(lhs, rhs) | gpu_array::views::grid_thread_stride;
     });
-    static_assert(std::same_as<std::ranges::range_reference_t<decltype(
-                                   std::declval<const_managed_view>() | gpu_array::views::enumerate)>,
-                               gpu_array::tuple<std::uint32_t,
-                                                gpu_tuple_record<const int&, const float&, const double&>>>);
+    static_assert(
+        std::same_as<
+            std::ranges::range_reference_t<decltype(std::declval<const_managed_view>() | gpu_array::views::enumerate)>,
+            gpu_array::tuple<std::uint32_t, gpu_tuple_record<const int&, const float&, const double&>>>);
 
     check_soa_range_concepts<device_soa>();
     check_soa_range_concepts<managed_soa>();
@@ -251,15 +250,15 @@ TEST(StructureOfArrays, ConstViewTypesAndMaterialization)
 
     static_assert(std::same_as<const_view::value_type, record>);
     static_assert(std::same_as<const_view::reference, gpu_tuple_record<const int&, const float&, const double&>>);
-    static_assert(std::same_as<const_view::iterator,
-                               gpu_array::structure_of_arrays_iterator<gpu_tuple_record, const int, const float,
-                                                                      const double>>);
+    static_assert(
+        std::same_as<const_view::iterator,
+                     gpu_array::structure_of_arrays_iterator<gpu_tuple_record, const int, const float, const double>>);
     static_assert(std::same_as<std::ranges::range_value_t<const_view>, record>);
     static_assert(std::same_as<std::ranges::range_reference_t<const_view>,
                                gpu_tuple_record<const int&, const float&, const double&>>);
     static_assert(!std::ranges::output_range<const_view, record>);
-    static_assert(std::same_as<decltype(std::declval<const const_view&>().template to<std::vector>()),
-                               std::vector<record>>);
+    static_assert(
+        std::same_as<decltype(std::declval<const const_view&>().template to<std::vector>()), std::vector<record>>);
 
     const auto expected = make_records<record>();
     const auto source = gpu_array::managed_structure_of_arrays<record>(expected);
@@ -288,8 +287,7 @@ TEST(StructureOfArraysView, PublicContractAndOwnerFactories)
     static_assert(std::same_as<std::ranges::range_reference_t<const_managed_view>,
                                gpu_tuple_record<const int&, const float&, const double&>>);
     static_assert(std::same_as<decltype(std::declval<const const_device_view&>().template data<0>()), const int*>);
-    static_assert(
-        std::same_as<decltype(std::declval<const const_managed_view&>().template data<1>()), const float*>);
+    static_assert(std::same_as<decltype(std::declval<const const_managed_view&>().template data<1>()), const float*>);
     static_assert(!gpu_array::detail::gpu_array_ptr<device_view>);
     static_assert(!gpu_array::detail::gpu_array_ptr<managed_view>);
     static_assert(!has_use_count<device_view>);
@@ -502,8 +500,7 @@ TEST(ManagedStructureOfArraysView, AdaptorIntegration)
     }
 
     expect_records_eq(values.template to<std::vector>(),
-                      {record{1, 1.5F, 2.5}, record{102, 13.5F, 5.5}, record{213, 26.5F, 8.75},
-                       record{4, 7.5F, 8.5}});
+                      {record{1, 1.5F, 2.5}, record{102, 13.5F, 5.5}, record{213, 26.5F, 8.75}, record{4, 7.5F, 8.5}});
 }
 
 TEST(ManagedStructureOfArrays, RecursiveMemoryManagement)
