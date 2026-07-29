@@ -70,37 +70,14 @@ namespace
         }
     };
 
-    template <template <typename...> typename Tuple, bool Const, typename... Ts>
-    class non_owning_structure_of_arrays_view
-        : public gpu_array::detail::soa_access_interface<
-              non_owning_structure_of_arrays_view<Tuple, Const, Ts...>, Tuple, std::uint32_t, Const, Ts...>,
-          public gpu_array::detail::soa_conversion_interface<
-              non_owning_structure_of_arrays_view<Tuple, Const, Ts...>, Tuple, std::uint32_t, false, Ts...>
-    {
-        using pointer_tuple = gpu_array::tuple<std::conditional_t<Const, const Ts*, Ts*>...>;
+    template <typename T>
+    concept has_use_count = requires(T value) { value.use_count(); };
 
-        pointer_tuple data_;
-        std::uint32_t size_;
+    template <typename T>
+    concept has_reset = requires(T value) { value.reset(); };
 
-    public:
-        __host__ __device__ non_owning_structure_of_arrays_view(
-            std::conditional_t<Const, const Ts*, Ts*>... data, std::uint32_t size)
-            : data_(data...), size_(size)
-        {
-        }
-
-        template <std::size_t N>
-        __host__ __device__ auto* data() noexcept
-        {
-            return gpu_array::get<N>(data_);
-        }
-        template <std::size_t N>
-        __host__ __device__ const auto* data() const noexcept
-        {
-            return gpu_array::get<N>(data_);
-        }
-        __host__ __device__ std::uint32_t size() const noexcept { return size_; }
-    };
+    template <typename T>
+    concept can_make_view = requires(T&& value) { std::forward<T>(value).view(); };
 
     template <typename Record>
     void expect_record_eq(const Record& record, int a, float b, double c)
@@ -257,7 +234,7 @@ TEST(StructureOfArrays, RangeTypes)
 TEST(StructureOfArrays, ConstViewTypesAndMaterialization)
 {
     using record = gpu_tuple_record<int, float, double>;
-    using const_view = non_owning_structure_of_arrays_view<gpu_tuple_record, true, int, float, double>;
+    using const_view = gpu_array::const_managed_structure_of_arrays_view<record, std::uint32_t>;
 
     static_assert(std::same_as<const_view::value_type, record>);
     static_assert(std::same_as<const_view::reference, gpu_tuple_record<const int&, const float&, const double&>>);
@@ -273,9 +250,89 @@ TEST(StructureOfArrays, ConstViewTypesAndMaterialization)
 
     const auto expected = make_records<record>();
     const auto source = gpu_array::managed_structure_of_arrays<record>(expected);
-    const auto view = const_view(source.template data<0>(), source.template data<1>(), source.template data<2>(),
-                                 source.size());
+    const auto view = source.view();
     expect_records_eq(view.template to<std::vector>(), expected);
+}
+
+TEST(StructureOfArraysView, PublicContractAndOwnerFactories)
+{
+    using record = gpu_tuple_record<int, float, double>;
+    using device_soa = gpu_array::structure_of_arrays<record, std::uint32_t>;
+    using managed_soa = gpu_array::managed_structure_of_arrays<record, std::uint32_t>;
+    using device_view = gpu_array::structure_of_arrays_view<record, std::uint32_t>;
+    using managed_view = gpu_array::managed_structure_of_arrays_view<record, std::uint32_t>;
+    using const_device_view = gpu_array::const_structure_of_arrays_view<record, std::uint32_t>;
+    using const_managed_view = gpu_array::const_managed_structure_of_arrays_view<record, std::uint32_t>;
+
+    static_assert(std::ranges::view<device_view>);
+    static_assert(std::ranges::random_access_range<device_view>);
+    static_assert(std::ranges::view<managed_view>);
+    static_assert(std::ranges::random_access_range<managed_view>);
+    static_assert(std::same_as<std::ranges::range_reference_t<const_device_view>,
+                               gpu_tuple_record<const int&, const float&, const double&>>);
+    static_assert(std::same_as<std::ranges::range_reference_t<const_managed_view>,
+                               gpu_tuple_record<const int&, const float&, const double&>>);
+    static_assert(std::same_as<decltype(std::declval<const const_device_view&>().template data<0>()), const int*>);
+    static_assert(
+        std::same_as<decltype(std::declval<const const_managed_view&>().template data<1>()), const float*>);
+    static_assert(!gpu_array::detail::gpu_array_ptr<device_view>);
+    static_assert(!gpu_array::detail::gpu_array_ptr<managed_view>);
+    static_assert(!has_use_count<device_view>);
+    static_assert(!has_reset<managed_view>);
+    static_assert(!can_make_view<device_soa&&>);
+    static_assert(!can_make_view<const device_soa&&>);
+    static_assert(!can_make_view<managed_soa&&>);
+    static_assert(!can_make_view<const managed_soa&&>);
+
+    const auto expected = make_records<record>();
+    auto device_values = device_soa(expected);
+    auto managed_values = managed_soa(expected);
+    const auto& const_device_values = device_values;
+    const auto& const_managed_values = managed_values;
+
+    static_assert(std::same_as<decltype(device_values.view()), device_view>);
+    static_assert(std::same_as<decltype(const_device_values.view()), const_device_view>);
+    static_assert(std::same_as<decltype(managed_values.view()), managed_view>);
+    static_assert(std::same_as<decltype(const_managed_values.view()), const_managed_view>);
+
+    const auto device_slice = device_values.view(1, 2);
+    EXPECT_EQ(device_slice.template data<0>(), device_values.template data<0>() + 1);
+    EXPECT_EQ(device_slice.template data<1>(), device_values.template data<1>() + 1);
+    EXPECT_EQ(device_slice.template data<2>(), device_values.template data<2>() + 1);
+    expect_records_eq(device_slice.template to<std::vector>(), {expected[1], expected[2]});
+    EXPECT_TRUE(device_values.view(0, 0).empty());
+    EXPECT_EQ(const_device_values.view(device_values.size(), 0).template data<0>(), nullptr);
+
+    auto managed_slice = managed_values.view(1, 2);
+    managed_slice[0].get_a() = 20;
+    managed_slice[1].get_c() = 70.0;
+    expect_records_eq(managed_values.template to<std::vector>(),
+                      {expected[0], record{20, 3.5F, 4.5}, record{3, 5.5F, 70.0}, expected[3]});
+    expect_records_eq(const_managed_values.view(2, 1).template to<std::vector>(), {record{3, 5.5F, 70.0}});
+
+    auto empty_owner = managed_soa{};
+    EXPECT_TRUE(empty_owner.view().empty());
+    EXPECT_EQ(empty_owner.view().template data<0>(), nullptr);
+}
+
+TEST(StructureOfArraysView, ValidatesMemoryKind)
+{
+    using record = gpu_tuple_record<int, float, double>;
+    auto device_values = gpu_array::structure_of_arrays<record, std::uint32_t>(make_records<record>());
+    auto managed_values = gpu_array::managed_structure_of_arrays<record, std::uint32_t>(make_records<record>());
+
+    EXPECT_THROW((gpu_array::structure_of_arrays_view<record, std::uint32_t>(
+                     managed_values.template data<0>(), managed_values.template data<1>(),
+                     managed_values.template data<2>(), managed_values.size())),
+                 std::runtime_error);
+    EXPECT_THROW((gpu_array::structure_of_arrays_view<record, std::uint32_t>(
+                     device_values.template data<0>(), managed_values.template data<1>(),
+                     device_values.template data<2>(), device_values.size())),
+                 std::runtime_error);
+    EXPECT_THROW((gpu_array::managed_structure_of_arrays_view<record, std::uint32_t>(
+                     device_values.template data<0>(), device_values.template data<1>(),
+                     device_values.template data<2>(), device_values.size())),
+                 std::runtime_error);
 }
 
 TEST(StructureOfArrays, TupleInput)
@@ -412,15 +469,16 @@ TEST(ManagedStructureOfArrays, RecursiveMemoryManagement)
     using record =
         gpu_tuple_record<recursive_memory_ops_element, recursive_memory_ops_element, recursive_memory_ops_element>;
     auto values = gpu_array::managed_structure_of_arrays<record, std::uint32_t>(3, gpu_array::default_init);
+    auto view = values.view();
     auto device_id = 0;
     GPU_CHECK_ERROR(gpu_array::api::gpuGetDevice(&device_id));
 
-    values.prefetch(device_id, 0, false);
+    view.prefetch(device_id, 0, false);
     EXPECT_EQ(values[0].get_a().prefetch_count, 0);
     EXPECT_EQ(values[0].get_b().prefetch_count, 0);
     EXPECT_EQ(values[0].get_c().prefetch_count, 0);
 
-    values.prefetch(1, 2, device_id, 0, true);
+    view.prefetch(1, 2, device_id, 0, true);
     EXPECT_EQ(values[0].get_a().prefetch_count, 0);
     EXPECT_EQ(values[1].get_a().prefetch_count, 1);
     EXPECT_EQ(values[1].get_b().prefetch_count, 1);
@@ -429,7 +487,7 @@ TEST(ManagedStructureOfArrays, RecursiveMemoryManagement)
     EXPECT_EQ(values[2].get_b().prefetch_device_id, device_id);
     EXPECT_EQ(values[2].get_c().prefetch_device_id, device_id);
 
-    values.prefetch_to_cpu(1, 1, 0, true);
+    view.prefetch_to_cpu(1, 1, 0, true);
     EXPECT_EQ(values[0].get_a().prefetch_count, 0);
     EXPECT_EQ(values[1].get_a().prefetch_count, 2);
     EXPECT_EQ(values[1].get_b().prefetch_count, 2);
@@ -438,12 +496,12 @@ TEST(ManagedStructureOfArrays, RecursiveMemoryManagement)
     EXPECT_EQ(values[1].get_b().prefetch_device_id, gpuCpuDeviceId);
     EXPECT_EQ(values[1].get_c().prefetch_device_id, gpuCpuDeviceId);
 
-    values.mem_advise(gpu_array::api::gpuMemoryAdvise::SetReadMostly, device_id, false);
+    view.mem_advise(gpu_array::api::gpuMemoryAdvise::SetReadMostly, device_id, false);
     EXPECT_EQ(values[0].get_a().mem_advise_count, 0);
     EXPECT_EQ(values[1].get_b().mem_advise_count, 0);
     EXPECT_EQ(values[2].get_c().mem_advise_count, 0);
 
-    values.mem_advise(0, 2, gpu_array::api::gpuMemoryAdvise::SetReadMostly, device_id, true);
+    view.mem_advise(0, 2, gpu_array::api::gpuMemoryAdvise::SetReadMostly, device_id, true);
     EXPECT_EQ(values[0].get_a().mem_advise_count, 1);
     EXPECT_EQ(values[0].get_b().mem_advise_count, 1);
     EXPECT_EQ(values[0].get_c().mem_advise_count, 1);
@@ -453,7 +511,7 @@ TEST(ManagedStructureOfArrays, RecursiveMemoryManagement)
     EXPECT_EQ(values[1].get_a().mem_advise_value, gpu_array::api::gpuMemoryAdvise::SetReadMostly);
     EXPECT_EQ(values[2].get_a().mem_advise_count, 0);
 
-    values.mem_advise_to_cpu(1, 1, gpu_array::api::gpuMemoryAdvise::SetPreferredLocation, true);
+    view.mem_advise_to_cpu(1, 1, gpu_array::api::gpuMemoryAdvise::SetPreferredLocation, true);
     EXPECT_EQ(values[0].get_a().mem_advise_count, 1);
     EXPECT_EQ(values[1].get_a().mem_advise_count, 2);
     EXPECT_EQ(values[1].get_b().mem_advise_count, 2);

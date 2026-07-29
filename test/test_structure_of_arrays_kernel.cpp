@@ -93,6 +93,22 @@ namespace
     }
 
     template <typename Records>
+    __global__ void update_owner_slice_kernel(Records records, typename Records::size_type offset,
+                                              typename Records::size_type count)
+    {
+        auto view = records.view(offset, count);
+        const auto stride = static_cast<typename Records::size_type>(blockDim.x * gridDim.x);
+        for (auto index = static_cast<typename Records::size_type>(blockIdx.x * blockDim.x + threadIdx.x);
+             index < view.size(); index += stride)
+        {
+            auto record = view[index];
+            record.get_a() += 100;
+            record.get_b() += 10.0F;
+            record.get_c() += 1.0;
+        }
+    }
+
+    template <typename Records>
     __global__ void update_grid_thread_stride_view_kernel(Records records)
     {
         for (auto&& value : records | gpu_array::views::grid_thread_stride)
@@ -232,6 +248,32 @@ TEST(StructureOfArraysKernel, DataPointers)
     synchronize();
 
     expect_records_eq(copy_member_arrays<record>(records), member_arrays_expected(source));
+}
+
+TEST(StructureOfArraysViewKernel, CreatesSliceFromDeviceOwner)
+{
+    using record = gpu_tuple_record<int, float, double>;
+    const auto source = make_records<record>();
+    auto records = gpu_array::structure_of_arrays<record, std::uint32_t>(source);
+
+    update_owner_slice_kernel<<<2, 2>>>(records, 1, 2);
+    synchronize();
+
+    expect_records_eq(copy_member_arrays<record>(records),
+                      {source[0], record{102, 13.5F, 5.5}, record{103, 15.5F, 7.5}, source[3]});
+}
+
+TEST(ManagedStructureOfArraysViewKernel, CreatesSliceFromManagedOwner)
+{
+    using record = gpu_tuple_record<int, float, double>;
+    const auto source = make_records<record>();
+    auto records = gpu_array::managed_structure_of_arrays<record, std::uint32_t>(source);
+
+    update_owner_slice_kernel<<<2, 2>>>(records, 1, 2);
+    synchronize();
+
+    expect_records_eq(records.template to<std::vector>(),
+                      {source[0], record{102, 13.5F, 5.5}, record{103, 15.5F, 7.5}, source[3]});
 }
 
 TEST(ManagedStructureOfArraysKernel, GridThreadStrideView)
