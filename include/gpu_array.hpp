@@ -725,8 +725,7 @@ namespace gpu_array
             {
                 derived().mem_advise_range(n, len, advise, device_id, recursive);
             }
-            __host__ void mem_advise(SizeType n, SizeType len, api::gpuMemoryAdvise advise,
-                                     bool recursive = true) const
+            __host__ void mem_advise(SizeType n, SizeType len, api::gpuMemoryAdvise advise, bool recursive = true) const
             {
                 mem_advise(n, len, advise, get_device_id(), recursive);
             }
@@ -753,12 +752,8 @@ namespace gpu_array
         constexpr void is_ptr_helper(const memory_kind<Unified>&)
         {
         }
-        constexpr void is_managed_ptr_helper(const memory_kind<true>&)
-        {
-        }
-        constexpr void is_unmanaged_ptr_helper(const memory_kind<false>&)
-        {
-        }
+        constexpr void is_managed_ptr_helper(const memory_kind<true>&) {}
+        constexpr void is_unmanaged_ptr_helper(const memory_kind<false>&) {}
         template <bool Unified, typename SizeType, typename ValueType>
         constexpr void is_array_helper(const detail::owning_storage<Unified, SizeType, ValueType>&)
         {
@@ -1401,11 +1396,11 @@ namespace gpu_array
     };
 
     template <typename ValueType, typename SizeType>
-    class managed_array : public detail::owning_storage<true, SizeType, ValueType>,
-                          public detail::array_access_interface<managed_array<ValueType, SizeType>, ValueType, SizeType>,
-                          public detail::managed_memory_interface<managed_array<ValueType, SizeType>, SizeType>,
-                          public detail::managed_array_conversion_interface<managed_array<ValueType, SizeType>, ValueType,
-                                                                            SizeType>
+    class managed_array
+        : public detail::owning_storage<true, SizeType, ValueType>,
+          public detail::array_access_interface<managed_array<ValueType, SizeType>, ValueType, SizeType>,
+          public detail::managed_memory_interface<managed_array<ValueType, SizeType>, SizeType>,
+          public detail::managed_array_conversion_interface<managed_array<ValueType, SizeType>, ValueType, SizeType>
     {
         using base = detail::owning_storage<true, SizeType, ValueType>;
         friend class detail::managed_memory_interface<managed_array<ValueType, SizeType>, SizeType>;
@@ -1561,6 +1556,7 @@ namespace gpu_array
                     for (std::size_t i = 0; i < base::size_; ++i) data()[i].mem_advise(advise, device_id);
             }
         }
+
     public:
 #if defined(GPU_OVERLOAD_HOST)
         __host__ managed_array(pointer ptr, std::size_t size) : base(size)
@@ -2422,9 +2418,9 @@ namespace gpu_array
         : public detail::owning_storage<true, SizeType, Ts...>,
           public detail::soa_access_interface<managed_structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType,
                                               Ts...>,
-                    public detail::managed_memory_interface<managed_structure_of_arrays<Tuple<Ts...>, SizeType>, SizeType>,
-                    public detail::soa_conversion_interface<managed_structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType,
-                                                                                                    false, Ts...>
+          public detail::managed_memory_interface<managed_structure_of_arrays<Tuple<Ts...>, SizeType>, SizeType>,
+          public detail::soa_conversion_interface<managed_structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType,
+                                                  false, Ts...>
     {
         static constexpr auto num_arrays = sizeof...(Ts);
         using base = detail::owning_storage<true, SizeType, Ts...>;
@@ -2698,6 +2694,7 @@ namespace gpu_array
                 }
             });
         }
+
     public:
         template <std::size_t N>
         __device__ void reset(std::tuple_element_t<N, tuple_pointer_type> ptr)

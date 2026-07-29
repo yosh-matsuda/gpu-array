@@ -108,7 +108,8 @@ namespace
         const auto fixed_size = value.template to<std::array<record, 4>>();
         for (auto index = std::size_t{0}; index < fixed_size.size(); ++index)
         {
-            expect_record_eq(fixed_size[index], expected[index].get_a(), expected[index].get_b(), expected[index].get_c());
+            expect_record_eq(fixed_size[index], expected[index].get_a(), expected[index].get_b(),
+                             expected[index].get_c());
         }
         EXPECT_THROW((value.template to<std::array<record, 3>>()), std::runtime_error);
 
@@ -352,8 +353,8 @@ TEST(ManagedStructureOfArrays, ZipViewReferences)
 
 TEST(ManagedStructureOfArrays, RecursiveMemoryManagement)
 {
-    using record = gpu_tuple_record<recursive_memory_ops_element, recursive_memory_ops_element,
-                                    recursive_memory_ops_element>;
+    using record =
+        gpu_tuple_record<recursive_memory_ops_element, recursive_memory_ops_element, recursive_memory_ops_element>;
     auto values = gpu_array::managed_structure_of_arrays<record, std::uint32_t>(3, gpu_array::default_init);
     auto device_id = 0;
     GPU_CHECK_ERROR(gpu_array::api::gpuGetDevice(&device_id));
