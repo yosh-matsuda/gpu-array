@@ -52,6 +52,18 @@ namespace
         }
     }
 
+    template <typename Array>
+    __global__ void write_owner_slice_kernel(Array values, typename Array::size_type offset,
+                                             typename Array::size_type count, int value)
+    {
+        auto view = values.view(offset, count);
+        for (auto index = static_cast<typename Array::size_type>(blockIdx.x * blockDim.x + threadIdx.x);
+             index < view.size(); index += static_cast<typename Array::size_type>(blockDim.x * gridDim.x))
+        {
+            view[index] = value + static_cast<int>(index);
+        }
+    }
+
     template <typename SourceArray, typename DestinationArray>
     __global__ void copy_from_const_surface_kernel(const SourceArray source, DestinationArray destination)
     {
@@ -131,7 +143,7 @@ TEST(ArrayViewKernel, WritesThroughPublicView)
 {
     constexpr auto size = std::uint32_t{29};
     auto values = device_int_array(size, 0);
-    auto view = gpu_array::array_view<int, std::uint32_t>(values.data(), values.size());
+    auto view = values.view();
 
     write_indices_kernel<<<3, 5>>>(view, 17);
     synchronize();
@@ -142,6 +154,26 @@ TEST(ArrayViewKernel, WritesThroughPublicView)
         expected[index] = static_cast<int>(index) + 17;
     }
     expect_vector(values, expected);
+}
+
+TEST(ArrayViewKernel, CreatesSliceFromOwnerOnDevice)
+{
+    auto values = device_int_array(std::vector<int>{0, 0, 0, 0, 0, 0});
+
+    write_owner_slice_kernel<<<2, 2>>>(values, 2, 3, 10);
+    synchronize();
+
+    expect_vector(values, {0, 0, 10, 11, 12, 0});
+}
+
+TEST(ManagedArrayViewKernel, CreatesSliceFromOwnerOnDevice)
+{
+    auto values = managed_int_array{0, 0, 0, 0, 0, 0};
+
+    write_owner_slice_kernel<<<2, 2>>>(values, 1, 4, 20);
+    synchronize();
+
+    expect_vector(values, {0, 20, 21, 22, 23, 0});
 }
 
 TEST(ArrayKernel, UsesDevicePointerAndIteratorSurface)

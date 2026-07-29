@@ -1257,6 +1257,10 @@ namespace gpu_array
         {
         };
 
+        class validated_view_tag
+        {
+        };
+
         template <typename ValueType, typename SizeType, bool Unified, bool Const>
         class basic_array_view
             : protected storage<SizeType, std::conditional_t<Const, const ValueType, ValueType>>,
@@ -1318,6 +1322,11 @@ namespace gpu_array
 
             __host__ __device__ pointer data() noexcept { return gpu_array::get<0>(storage_base::data_); }
             __host__ __device__ const_pointer data() const noexcept { return gpu_array::get<0>(storage_base::data_); }
+
+            __host__ __device__ basic_array_view(pointer ptr, size_type size, validated_view_tag)
+                : storage_base(ptr, size)
+            {
+            }
 
         protected:
             __host__ void prefetch_range(size_type n, size_type length, int device_id, api::gpuStream_t stream,
@@ -1397,6 +1406,32 @@ namespace gpu_array
 
         __host__ __device__ pointer data() noexcept { return gpu_array::get<0>(base::data_); }
         __host__ __device__ const_pointer data() const noexcept { return gpu_array::get<0>(base::data_); }
+
+        __host__ __device__ array_view<value_type, size_type> view() & noexcept
+        {
+            return array_view<value_type, size_type>(data(), base::size(), detail::validated_view_tag{});
+        }
+        __host__ __device__ const_array_view<value_type, size_type> view() const& noexcept
+        {
+            return const_array_view<value_type, size_type>(data(), base::size(), detail::validated_view_tag{});
+        }
+        __host__ __device__ array_view<value_type, size_type> view(size_type offset, size_type count) & noexcept
+        {
+            assert(offset <= base::size() && count <= base::size() - offset);
+            return array_view<value_type, size_type>(data() == nullptr ? nullptr : data() + offset, count,
+                                                     detail::validated_view_tag{});
+        }
+        __host__ __device__ const_array_view<value_type, size_type> view(size_type offset,
+                                                                           size_type count) const& noexcept
+        {
+            assert(offset <= base::size() && count <= base::size() - offset);
+            return const_array_view<value_type, size_type>(data() == nullptr ? nullptr : data() + offset, count,
+                                                           detail::validated_view_tag{});
+        }
+        __host__ __device__ array_view<value_type, size_type> view() && = delete;
+        __host__ __device__ const_array_view<value_type, size_type> view() const&& = delete;
+        __host__ __device__ array_view<value_type, size_type> view(size_type, size_type) && = delete;
+        __host__ __device__ const_array_view<value_type, size_type> view(size_type, size_type) const&& = delete;
 
         array() = default;
         __host__ __device__ array(const array& r) : base(r) {}
@@ -1581,6 +1616,33 @@ namespace gpu_array
 
         __host__ __device__ pointer data() noexcept { return gpu_array::get<0>(base::data_); }
         __host__ __device__ const_pointer data() const noexcept { return gpu_array::get<0>(base::data_); }
+
+        __host__ __device__ managed_array_view<value_type, size_type> view() & noexcept
+        {
+            return managed_array_view<value_type, size_type>(data(), base::size(), detail::validated_view_tag{});
+        }
+        __host__ __device__ const_managed_array_view<value_type, size_type> view() const& noexcept
+        {
+            return const_managed_array_view<value_type, size_type>(data(), base::size(), detail::validated_view_tag{});
+        }
+        __host__ __device__ managed_array_view<value_type, size_type> view(size_type offset, size_type count) & noexcept
+        {
+            assert(offset <= base::size() && count <= base::size() - offset);
+            return managed_array_view<value_type, size_type>(data() == nullptr ? nullptr : data() + offset, count,
+                                                             detail::validated_view_tag{});
+        }
+        __host__ __device__ const_managed_array_view<value_type, size_type> view(size_type offset,
+                                                                                   size_type count) const& noexcept
+        {
+            assert(offset <= base::size() && count <= base::size() - offset);
+            return const_managed_array_view<value_type, size_type>(data() == nullptr ? nullptr : data() + offset,
+                                                                   count,
+                                                                   detail::validated_view_tag{});
+        }
+        __host__ __device__ managed_array_view<value_type, size_type> view() && = delete;
+        __host__ __device__ const_managed_array_view<value_type, size_type> view() const&& = delete;
+        __host__ __device__ managed_array_view<value_type, size_type> view(size_type, size_type) && = delete;
+        __host__ __device__ const_managed_array_view<value_type, size_type> view(size_type, size_type) const&& = delete;
 
         managed_array() = default;
         __host__ __device__ managed_array(const managed_array& r) : base(r) {}

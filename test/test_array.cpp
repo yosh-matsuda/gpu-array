@@ -27,6 +27,9 @@ namespace
     template <typename T>
     concept has_reset = requires(T value) { value.reset(); };
 
+    template <typename T>
+    concept can_make_view = requires(T&& value) { std::forward<T>(value).view(); };
+
     template <typename Array>
     constexpr void check_array_range_concepts()
     {
@@ -387,11 +390,46 @@ TEST(ArrayView, ValidatesMemoryKind)
                  std::runtime_error);
 }
 
+TEST(ArrayView, OwnerFactories)
+{
+    auto device_values = device_array(std::vector<int>{1, 2, 3, 4});
+    auto managed_values = managed_int_array{5, 6, 7, 8};
+    const auto& const_device_values = device_values;
+    const auto& const_managed_values = managed_values;
+
+    static_assert(std::same_as<decltype(device_values.view()), gpu_array::array_view<int, std::uint32_t>>);
+    static_assert(std::same_as<decltype(const_device_values.view()), gpu_array::const_array_view<int, std::uint32_t>>);
+    static_assert(std::same_as<decltype(managed_values.view()), gpu_array::managed_array_view<int, std::uint32_t>>);
+    static_assert(
+        std::same_as<decltype(const_managed_values.view()), gpu_array::const_managed_array_view<int, std::uint32_t>>);
+    static_assert(!can_make_view<device_array&&>);
+    static_assert(!can_make_view<const device_array&&>);
+    static_assert(!can_make_view<managed_int_array&&>);
+    static_assert(!can_make_view<const managed_int_array&&>);
+
+    const auto device_slice = device_values.view(1, 2);
+    EXPECT_EQ(device_slice.data(), device_values.data() + 1);
+    EXPECT_EQ(device_slice.template to<std::vector>(), (std::vector<int>{2, 3}));
+    EXPECT_TRUE(device_values.view(0, 0).empty());
+    EXPECT_EQ(device_values.view(0, 0).data(), nullptr);
+    EXPECT_EQ(const_device_values.view(4, 0).data(), nullptr);
+
+    auto managed_slice = managed_values.view(1, 2);
+    managed_slice.front() = 60;
+    managed_slice.back() = 70;
+    EXPECT_EQ(managed_values.template to<std::vector>(), (std::vector<int>{5, 60, 70, 8}));
+    EXPECT_EQ(const_managed_values.view(2, 1).template to<std::vector>(), (std::vector<int>{70}));
+
+    auto empty_owner = managed_int_array{};
+    auto empty = empty_owner.view();
+    EXPECT_TRUE(empty.empty());
+    EXPECT_EQ(empty.data(), nullptr);
+}
+
 TEST(ManagedArrayView, RecursiveMemoryManagement)
 {
     auto values = gpu_array::managed_array<recursive_memory_ops_element, std::uint32_t>(3, gpu_array::default_init);
-    auto view = gpu_array::managed_array_view<recursive_memory_ops_element, std::uint32_t>(values.data(),
-                                                                                             values.size());
+    auto view = values.view();
     auto device_id = 0;
     GPU_CHECK_ERROR(gpu_array::api::gpuGetDevice(&device_id));
 
