@@ -47,6 +47,28 @@ namespace
         __host__ __device__ decltype(auto) get_c() const { return std::get<2>(*this); }
     };
 
+    struct recursive_memory_ops_element
+    {
+        mutable int prefetch_count = 0;
+        mutable int prefetch_device_id = gpuInvalidDeviceId;
+        mutable int mem_advise_count = 0;
+        mutable int mem_advise_device_id = gpuInvalidDeviceId;
+        mutable gpu_array::api::gpuMemoryAdvise mem_advise_value = gpu_array::api::gpuMemoryAdvise::UnsetReadMostly;
+
+        void prefetch(int device_id, gpu_array::api::gpuStream_t) const
+        {
+            ++prefetch_count;
+            prefetch_device_id = device_id;
+        }
+
+        void mem_advise(gpu_array::api::gpuMemoryAdvise advise, int device_id) const
+        {
+            ++mem_advise_count;
+            mem_advise_device_id = device_id;
+            mem_advise_value = advise;
+        }
+    };
+
     template <typename Record>
     void expect_record_eq(const Record& record, int a, float b, double c)
     {
@@ -295,6 +317,63 @@ TEST(ManagedStructureOfArrays, ZipViewReferences)
     expect_records_eq(lhs.template to<std::vector>(),
                       std::vector<record>{record{11, 11.5F, 12.5}, record{22, 23.5F, 24.5}, record{33, 35.5F, 36.5},
                                           record{4, 7.5F, 8.5}});
+}
+
+TEST(ManagedStructureOfArrays, RecursiveMemoryManagement)
+{
+    using record = gpu_tuple_record<recursive_memory_ops_element, recursive_memory_ops_element,
+                                    recursive_memory_ops_element>;
+    auto values = gpu_array::managed_structure_of_arrays<record, std::uint32_t>(3, gpu_array::default_init);
+    auto device_id = 0;
+    GPU_CHECK_ERROR(gpu_array::api::gpuGetDevice(&device_id));
+
+    values.prefetch(device_id, 0, false);
+    EXPECT_EQ(values[0].get_a().prefetch_count, 0);
+    EXPECT_EQ(values[0].get_b().prefetch_count, 0);
+    EXPECT_EQ(values[0].get_c().prefetch_count, 0);
+
+    values.prefetch(1, 2, device_id, 0, true);
+    EXPECT_EQ(values[0].get_a().prefetch_count, 0);
+    EXPECT_EQ(values[1].get_a().prefetch_count, 1);
+    EXPECT_EQ(values[1].get_b().prefetch_count, 1);
+    EXPECT_EQ(values[1].get_c().prefetch_count, 1);
+    EXPECT_EQ(values[2].get_a().prefetch_device_id, device_id);
+    EXPECT_EQ(values[2].get_b().prefetch_device_id, device_id);
+    EXPECT_EQ(values[2].get_c().prefetch_device_id, device_id);
+
+    values.prefetch_to_cpu(1, 1, 0, true);
+    EXPECT_EQ(values[0].get_a().prefetch_count, 0);
+    EXPECT_EQ(values[1].get_a().prefetch_count, 2);
+    EXPECT_EQ(values[1].get_b().prefetch_count, 2);
+    EXPECT_EQ(values[1].get_c().prefetch_count, 2);
+    EXPECT_EQ(values[1].get_a().prefetch_device_id, gpuCpuDeviceId);
+    EXPECT_EQ(values[1].get_b().prefetch_device_id, gpuCpuDeviceId);
+    EXPECT_EQ(values[1].get_c().prefetch_device_id, gpuCpuDeviceId);
+
+    values.mem_advise(gpu_array::api::gpuMemoryAdvise::SetReadMostly, device_id, false);
+    EXPECT_EQ(values[0].get_a().mem_advise_count, 0);
+    EXPECT_EQ(values[1].get_b().mem_advise_count, 0);
+    EXPECT_EQ(values[2].get_c().mem_advise_count, 0);
+
+    values.mem_advise(0, 2, gpu_array::api::gpuMemoryAdvise::SetReadMostly, device_id, true);
+    EXPECT_EQ(values[0].get_a().mem_advise_count, 1);
+    EXPECT_EQ(values[0].get_b().mem_advise_count, 1);
+    EXPECT_EQ(values[0].get_c().mem_advise_count, 1);
+    EXPECT_EQ(values[1].get_a().mem_advise_device_id, device_id);
+    EXPECT_EQ(values[1].get_b().mem_advise_device_id, device_id);
+    EXPECT_EQ(values[1].get_c().mem_advise_device_id, device_id);
+    EXPECT_EQ(values[1].get_a().mem_advise_value, gpu_array::api::gpuMemoryAdvise::SetReadMostly);
+    EXPECT_EQ(values[2].get_a().mem_advise_count, 0);
+
+    values.mem_advise_to_cpu(1, 1, gpu_array::api::gpuMemoryAdvise::SetPreferredLocation, true);
+    EXPECT_EQ(values[0].get_a().mem_advise_count, 1);
+    EXPECT_EQ(values[1].get_a().mem_advise_count, 2);
+    EXPECT_EQ(values[1].get_b().mem_advise_count, 2);
+    EXPECT_EQ(values[1].get_c().mem_advise_count, 2);
+    EXPECT_EQ(values[1].get_a().mem_advise_device_id, gpuCpuDeviceId);
+    EXPECT_EQ(values[1].get_b().mem_advise_device_id, gpuCpuDeviceId);
+    EXPECT_EQ(values[1].get_c().mem_advise_device_id, gpuCpuDeviceId);
+    EXPECT_EQ(values[1].get_a().mem_advise_value, gpu_array::api::gpuMemoryAdvise::SetPreferredLocation);
 }
 
 // NOLINTEND
