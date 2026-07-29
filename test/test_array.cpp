@@ -18,24 +18,26 @@ namespace
     using device_array = gpu_array::array<int, std::uint32_t>;
     using managed_int_array = gpu_array::managed_array<int, std::uint32_t>;
 
-    template <typename ValueType, bool Unified>
+    template <typename ValueType, bool Unified, bool Const = false>
     class non_owning_array_view
         : public gpu_array::detail::memory_kind<Unified>,
-          public gpu_array::detail::array_access_interface<non_owning_array_view<ValueType, Unified>, ValueType,
-                                                           std::uint32_t>,
+          public gpu_array::detail::array_access_interface<non_owning_array_view<ValueType, Unified, Const>,
+                                                           ValueType, std::uint32_t, Const>,
           public std::conditional_t<Unified,
                                     gpu_array::detail::managed_array_conversion_interface<
-                                        non_owning_array_view<ValueType, Unified>, ValueType, std::uint32_t>,
+                                        non_owning_array_view<ValueType, Unified, Const>, ValueType, std::uint32_t>,
                                     gpu_array::detail::device_array_conversion_interface<
-                                        non_owning_array_view<ValueType, Unified>, ValueType, std::uint32_t>>
+                                        non_owning_array_view<ValueType, Unified, Const>, ValueType, std::uint32_t>>
     {
-        ValueType* data_;
+        using data_pointer = std::conditional_t<Const, const ValueType*, ValueType*>;
+
+        data_pointer data_;
         std::uint32_t size_;
 
     public:
-        __host__ __device__ non_owning_array_view(ValueType* data, std::uint32_t size) : data_(data), size_(size) {}
+        __host__ __device__ non_owning_array_view(data_pointer data, std::uint32_t size) : data_(data), size_(size) {}
 
-        __host__ __device__ ValueType* data() noexcept { return data_; }
+        __host__ __device__ data_pointer data() noexcept { return data_; }
         __host__ __device__ const ValueType* data() const noexcept { return data_; }
         __host__ __device__ std::uint32_t size() const noexcept { return size_; }
     };
@@ -326,6 +328,32 @@ TEST(ArrayViewPreparation, MaterializesNestedManagedViews)
     static_assert(gpu_array::detail::gpu_managed_random_access_range<decltype(view)>);
     static_assert(std::same_as<decltype(view.template to<std::vector>()), std::vector<std::vector<int>>>);
     EXPECT_EQ(view.template to<std::vector>(), expected);
+}
+
+TEST(ArrayViewPreparation, ConstViewTypesAndMaterialization)
+{
+    using const_view = non_owning_array_view<int, true, true>;
+    using const_device_view = non_owning_array_view<int, false, true>;
+
+    static_assert(std::same_as<const_view::value_type, int>);
+    static_assert(std::same_as<const_view::pointer, const int*>);
+    static_assert(std::same_as<const_view::reference, const int&>);
+    static_assert(std::same_as<std::ranges::range_value_t<const_view>, int>);
+    static_assert(std::same_as<std::ranges::range_reference_t<const_view>, const int&>);
+    static_assert(!std::ranges::output_range<const_view, int>);
+    static_assert(std::same_as<decltype(std::declval<const const_view&>().template to<std::vector>()),
+                               std::vector<int>>);
+    static_assert(std::same_as<decltype(std::declval<const const_view&>().template to<std::vector<long>>()),
+                               std::vector<long>>);
+
+    const auto source = managed_int_array{2, 3, 5, 7};
+    const auto view = const_view(source.data(), source.size());
+    EXPECT_EQ(view.template to<std::vector>(), (std::vector<int>{2, 3, 5, 7}));
+    EXPECT_EQ(view.template to<std::vector<long>>(), (std::vector<long>{2L, 3L, 5L, 7L}));
+
+    const auto device_source = device_array(std::vector<int>{11, 13});
+    const auto device_view = const_device_view(device_source.data(), device_source.size());
+    EXPECT_EQ(device_view.template to<std::vector<long>>(), (std::vector<long>{11L, 13L}));
 }
 
 TEST(ManagedArray, HostAccess)

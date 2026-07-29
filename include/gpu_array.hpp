@@ -631,7 +631,7 @@ namespace gpu_array
 #endif
         };
 
-        template <class Derived, typename ValueType, typename SizeType>
+        template <class Derived, typename ValueType, typename SizeType, bool Const = false>
         class array_access_interface
         {
             __host__ __device__ Derived& derived() noexcept { return static_cast<Derived&>(*this); }
@@ -639,12 +639,12 @@ namespace gpu_array
 
         public:
             using size_type = SizeType;
-            using value_type = ValueType;
-            using reference = value_type&;
+            using value_type = std::remove_cv_t<ValueType>;
+            using reference = std::conditional_t<Const || std::is_const_v<ValueType>, const value_type&, value_type&>;
             using const_reference = const value_type&;
-            using iterator = value_type*;
+            using iterator = std::conditional_t<Const || std::is_const_v<ValueType>, const value_type*, value_type*>;
             using const_iterator = const value_type*;
-            using pointer = value_type*;
+            using pointer = iterator;
             using const_pointer = const value_type*;
 
             __host__ __device__ const_reference operator[](size_type i) const noexcept { return derived().data()[i]; }
@@ -832,8 +832,10 @@ namespace gpu_array
             __host__ __device__ const Derived& derived() const noexcept { return static_cast<const Derived&>(*this); }
 
         public:
+            using element_type = std::remove_cv_t<ValueType>;
+
             template <gpu_array_ptr T>
-            requires std::same_as<ValueType, typename T::value_type>
+            requires std::same_as<element_type, typename T::value_type>
             __host__ T to() const
             {
                 const auto& value = derived();
@@ -843,7 +845,7 @@ namespace gpu_array
                     if (value.size() == 0) return result;
 
                     assert(value.data() != nullptr);
-                    GPU_CHECK_ERROR(api::gpuMemcpy(result.data(), value.data(), sizeof(ValueType) * value.size(),
+                    GPU_CHECK_ERROR(api::gpuMemcpy(result.data(), value.data(), sizeof(element_type) * value.size(),
                                                    gpuMemcpyDeviceToDevice));
                     return result;
                 }
@@ -853,7 +855,7 @@ namespace gpu_array
                     if (value.size() == 0) return result;
 
                     assert(value.data() != nullptr);
-                    GPU_CHECK_ERROR(api::gpuMemcpy(result.data(), value.data(), sizeof(ValueType) * value.size(),
+                    GPU_CHECK_ERROR(api::gpuMemcpy(result.data(), value.data(), sizeof(element_type) * value.size(),
                                                    gpuMemcpyDeviceToHost));
                     return result;
                 }
@@ -864,11 +866,11 @@ namespace gpu_array
             }
 
             template <array_convertible T>
-            requires std::same_as<ValueType, std::ranges::range_value_t<T>> &&
+                        requires std::same_as<element_type, std::ranges::range_value_t<T>> &&
                      ((std::ranges::contiguous_range<T> &&
                        (std::is_constructible_v<T, SizeType> || std::is_default_constructible_v<T>)) ||
                       (std::is_default_constructible_v<T> &&
-                       requires { std::declval<T>().push_back(std::declval<ValueType>()); }))
+                                             requires { std::declval<T>().push_back(std::declval<element_type>()); }))
             __host__ T to() const
             {
                 const auto& value = derived();
@@ -883,13 +885,13 @@ namespace gpu_array
 
                     if (std::ranges::size(result) != value.size()) throw std::runtime_error("size mismatch");
                     GPU_CHECK_ERROR(api::gpuMemcpy(std::ranges::data(result), value.data(),
-                                                   sizeof(ValueType) * value.size(), gpuMemcpyDeviceToHost));
+                                                   sizeof(element_type) * value.size(), gpuMemcpyDeviceToHost));
                     return result;
                 }
                 else
                 {
-                    auto buffer = std::make_unique_for_overwrite<ValueType[]>(value.size());
-                    GPU_CHECK_ERROR(api::gpuMemcpy(buffer.get(), value.data(), sizeof(ValueType) * value.size(),
+                    auto buffer = std::make_unique_for_overwrite<element_type[]>(value.size());
+                    GPU_CHECK_ERROR(api::gpuMemcpy(buffer.get(), value.data(), sizeof(element_type) * value.size(),
                                                    gpuMemcpyDeviceToHost));
                     auto result = T();
                     if constexpr (requires { std::declval<T>().reserve(std::declval<std::size_t>()); })
@@ -902,14 +904,14 @@ namespace gpu_array
             }
 
             template <gpu_array_ptr T>
-            requires std::is_constructible_v<ValueType, typename T::value_type> &&
-                     (!std::same_as<ValueType, typename T::value_type>)
+            requires std::is_constructible_v<element_type, typename T::value_type> &&
+                     (!std::same_as<element_type, typename T::value_type>)
             __host__ T to() const
             {
                 using U = typename T::value_type;
                 const auto& value = derived();
-                auto buffer = std::make_unique_for_overwrite<ValueType[]>(value.size());
-                GPU_CHECK_ERROR(api::gpuMemcpy(buffer.get(), value.data(), sizeof(ValueType) * value.size(),
+                auto buffer = std::make_unique_for_overwrite<element_type[]>(value.size());
+                GPU_CHECK_ERROR(api::gpuMemcpy(buffer.get(), value.data(), sizeof(element_type) * value.size(),
                                                gpuMemcpyDeviceToHost));
 
                 if constexpr (gpu_unmanaged_array_ptr<T>)
@@ -950,14 +952,14 @@ namespace gpu_array
 
             template <array_convertible T>
             requires std::is_default_constructible_v<T> &&
-                     requires(const ValueType& value) { static_cast<std::ranges::range_value_t<T>>(value); } &&
-                     (!std::same_as<ValueType, std::ranges::range_value_t<T>>)
+                     requires(const element_type& value) { static_cast<std::ranges::range_value_t<T>>(value); } &&
+                     (!std::same_as<element_type, std::ranges::range_value_t<T>>)
             __host__ T to() const
             {
                 using U = std::ranges::range_value_t<T>;
                 const auto& value = derived();
-                auto buffer = std::make_unique_for_overwrite<ValueType[]>(value.size());
-                GPU_CHECK_ERROR(api::gpuMemcpy(buffer.get(), value.data(), sizeof(ValueType) * value.size(),
+                auto buffer = std::make_unique_for_overwrite<element_type[]>(value.size());
+                GPU_CHECK_ERROR(api::gpuMemcpy(buffer.get(), value.data(), sizeof(element_type) * value.size(),
                                                gpuMemcpyDeviceToHost));
 
                 auto result = T();
@@ -968,13 +970,13 @@ namespace gpu_array
                         result.reserve(value.size());
                     }
                     std::transform(buffer.get(), buffer.get() + value.size(), std::back_inserter(result),
-                                   [](const ValueType& element) { return static_cast<U>(element); });
+                                   [](const element_type& element) { return static_cast<U>(element); });
                 }
                 else
                 {
                     if (std::ranges::size(result) != value.size()) throw std::runtime_error("size mismatch");
                     std::transform(buffer.get(), buffer.get() + value.size(), std::ranges::begin(result),
-                                   [](const ValueType& element) { return static_cast<U>(element); });
+                                   [](const element_type& element) { return static_cast<U>(element); });
                 }
                 return result;
             }
@@ -982,12 +984,12 @@ namespace gpu_array
             template <template <typename...> typename T>
             __host__ auto to() const
             {
-                return to<T<ValueType>>();
+                return to<T<element_type>>();
             }
 
             template <array_convertible T>
             requires std::is_default_constructible_v<T> &&
-                     requires(const ValueType& value) { static_cast<std::ranges::range_value_t<T>>(value); }
+                     requires(const element_type& value) { static_cast<std::ranges::range_value_t<T>>(value); }
             __host__ explicit operator T() const
             {
                 return to<T>();
@@ -1000,8 +1002,10 @@ namespace gpu_array
             __host__ __device__ const Derived& derived() const noexcept { return static_cast<const Derived&>(*this); }
 
         public:
+            using element_type = std::remove_cv_t<ValueType>;
+
             template <gpu_array_ptr T>
-            requires std::is_constructible_v<ValueType, typename T::value_type>
+            requires std::is_constructible_v<element_type, typename T::value_type>
             __host__ T to() const
             {
                 using U = typename T::value_type;
@@ -1011,7 +1015,7 @@ namespace gpu_array
                     auto result = T(value.size(), default_init);
                     if (value.size() == 0) return result;
 
-                    if constexpr (std::is_same_v<ValueType, U>)
+                    if constexpr (std::is_same_v<element_type, U>)
                     {
                         assert(result.data() != nullptr);
                         GPU_CHECK_ERROR(api::gpuMemcpy(result.data(), value.data(), sizeof(U) * value.size(),
@@ -1052,7 +1056,7 @@ namespace gpu_array
 
             template <array_convertible T>
             requires (gpu_array_ptr<T> || std::is_default_constructible_v<T>) &&
-                     requires(const ValueType& value) { static_cast<std::ranges::range_value_t<T>>(value); }
+                     requires(const element_type& value) { static_cast<std::ranges::range_value_t<T>>(value); }
             __host__ T to() const
             {
                 using U = std::ranges::range_value_t<T>;
@@ -1065,7 +1069,7 @@ namespace gpu_array
                         result.reserve(value.size());
                     }
                     std::ranges::transform(value, std::back_inserter(result),
-                                           [](const ValueType& element) { return static_cast<U>(element); });
+                                           [](const element_type& element) { return static_cast<U>(element); });
                     return result;
                 }
                 else
@@ -1073,7 +1077,7 @@ namespace gpu_array
                     auto result = T();
                     if (std::ranges::size(result) != value.size()) throw std::runtime_error("size mismatch");
                     std::ranges::transform(value, std::ranges::begin(result),
-                                           [](const ValueType& element) { return static_cast<U>(element); });
+                                           [](const element_type& element) { return static_cast<U>(element); });
                     return result;
                 }
             }
@@ -1081,12 +1085,12 @@ namespace gpu_array
             template <template <typename...> typename T>
             __host__ auto to() const
             {
-                return to<to_range_value_deduced_t<ValueType, T>>();
+                return to<to_range_value_deduced_t<element_type, T>>();
             }
 
             template <array_convertible T>
             requires (gpu_array_ptr<T> || std::is_default_constructible_v<T>) &&
-                     requires(const ValueType& value) { static_cast<std::ranges::range_value_t<T>>(value); }
+                     requires(const element_type& value) { static_cast<std::ranges::range_value_t<T>>(value); }
             __host__ explicit operator T() const
             {
                 return to<T>();
@@ -1928,7 +1932,7 @@ namespace gpu_array
     public:
         using difference_type = std::ptrdiff_t;
         using size_type = std::size_t;
-        using value_type = Tuple<Ts...>;
+        using value_type = Tuple<std::remove_cv_t<Ts>...>;
         using reference = Tuple<Ts&...>;
         using iterator_concept = std::random_access_iterator_tag;
 
@@ -2062,7 +2066,7 @@ namespace gpu_array
 
     namespace detail
     {
-        template <class Derived, template <typename...> typename Tuple, typename SizeType, typename... Ts>
+        template <class Derived, template <typename...> typename Tuple, typename SizeType, bool Const, typename... Ts>
         class soa_access_interface
         {
             __host__ __device__ Derived& derived() noexcept { return static_cast<Derived&>(*this); }
@@ -2071,9 +2075,9 @@ namespace gpu_array
         public:
             using size_type = SizeType;
             using value_type = Tuple<Ts...>;
-            using reference = Tuple<Ts&...>;
+            using reference = Tuple<std::conditional_t<Const, const Ts&, Ts&>...>;
             using const_reference = Tuple<const Ts&...>;
-            using iterator = structure_of_arrays_iterator<Tuple, Ts...>;
+            using iterator = structure_of_arrays_iterator<Tuple, std::conditional_t<Const, const Ts, Ts>...>;
             using const_iterator = structure_of_arrays_iterator<Tuple, const Ts...>;
 
             __host__ __device__ iterator begin() noexcept
@@ -2123,7 +2127,7 @@ namespace gpu_array
             __host__ __device__ static decltype(auto) element_reference(Self& self, size_type index,
                                                                         std::index_sequence<Ns...>)
             {
-                using result_type = std::conditional_t<std::is_const_v<Self>, const_reference, reference>;
+                using result_type = std::conditional_t<Const || std::is_const_v<Self>, const_reference, reference>;
                 return result_type{self.template data<Ns>()[index]...};
             }
 
@@ -2167,7 +2171,8 @@ namespace gpu_array
                  std::constructible_from<Tuple<const Ts&...>, const Ts&...> && (std::is_trivially_copyable_v<Ts> && ...)
     class structure_of_arrays<Tuple<Ts...>, SizeType>
         : public detail::owning_storage<false, SizeType, Ts...>,
-          public detail::soa_access_interface<structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType, Ts...>,
+                    public detail::soa_access_interface<structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType, false,
+                                                                                            Ts...>,
           public detail::soa_conversion_interface<structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType, true,
                                                   Ts...>
     {
@@ -2185,7 +2190,7 @@ namespace gpu_array
 
     public:
         using access =
-            detail::soa_access_interface<structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType, Ts...>;
+            detail::soa_access_interface<structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType, false, Ts...>;
         using typename access::size_type;
         template <std::size_t N>
         using element_type = std::tuple_element_t<N, tuple_value_type>;
@@ -2417,7 +2422,7 @@ namespace gpu_array
     class managed_structure_of_arrays<Tuple<Ts...>, SizeType>
         : public detail::owning_storage<true, SizeType, Ts...>,
           public detail::soa_access_interface<managed_structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType,
-                                              Ts...>,
+                                                                                            false, Ts...>,
           public detail::managed_memory_interface<managed_structure_of_arrays<Tuple<Ts...>, SizeType>, SizeType>,
           public detail::soa_conversion_interface<managed_structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType,
                                                   false, Ts...>
@@ -2471,7 +2476,8 @@ namespace gpu_array
 
     public:
         using access =
-            detail::soa_access_interface<managed_structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType, Ts...>;
+            detail::soa_access_interface<managed_structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType, false,
+                                         Ts...>;
         using typename access::size_type;
         template <std::size_t N>
         using element_type = std::tuple_element_t<N, tuple_value_type>;

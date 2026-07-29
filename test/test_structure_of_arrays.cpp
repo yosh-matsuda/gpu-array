@@ -70,6 +70,38 @@ namespace
         }
     };
 
+    template <template <typename...> typename Tuple, bool Const, typename... Ts>
+    class non_owning_structure_of_arrays_view
+        : public gpu_array::detail::soa_access_interface<
+              non_owning_structure_of_arrays_view<Tuple, Const, Ts...>, Tuple, std::uint32_t, Const, Ts...>,
+          public gpu_array::detail::soa_conversion_interface<
+              non_owning_structure_of_arrays_view<Tuple, Const, Ts...>, Tuple, std::uint32_t, false, Ts...>
+    {
+        using pointer_tuple = gpu_array::tuple<std::conditional_t<Const, const Ts*, Ts*>...>;
+
+        pointer_tuple data_;
+        std::uint32_t size_;
+
+    public:
+        __host__ __device__ non_owning_structure_of_arrays_view(
+            std::conditional_t<Const, const Ts*, Ts*>... data, std::uint32_t size)
+            : data_(data...), size_(size)
+        {
+        }
+
+        template <std::size_t N>
+        __host__ __device__ auto* data() noexcept
+        {
+            return gpu_array::get<N>(data_);
+        }
+        template <std::size_t N>
+        __host__ __device__ const auto* data() const noexcept
+        {
+            return gpu_array::get<N>(data_);
+        }
+        __host__ __device__ std::uint32_t size() const noexcept { return size_; }
+    };
+
     template <typename Record>
     void expect_record_eq(const Record& record, int a, float b, double c)
     {
@@ -220,6 +252,30 @@ TEST(StructureOfArrays, RangeTypes)
     check_soa_range_concepts<managed_soa>();
 
     SUCCEED();
+}
+
+TEST(StructureOfArrays, ConstViewTypesAndMaterialization)
+{
+    using record = gpu_tuple_record<int, float, double>;
+    using const_view = non_owning_structure_of_arrays_view<gpu_tuple_record, true, int, float, double>;
+
+    static_assert(std::same_as<const_view::value_type, record>);
+    static_assert(std::same_as<const_view::reference, gpu_tuple_record<const int&, const float&, const double&>>);
+    static_assert(std::same_as<const_view::iterator,
+                               gpu_array::structure_of_arrays_iterator<gpu_tuple_record, const int, const float,
+                                                                      const double>>);
+    static_assert(std::same_as<std::ranges::range_value_t<const_view>, record>);
+    static_assert(std::same_as<std::ranges::range_reference_t<const_view>,
+                               gpu_tuple_record<const int&, const float&, const double&>>);
+    static_assert(!std::ranges::output_range<const_view, record>);
+    static_assert(std::same_as<decltype(std::declval<const const_view&>().template to<std::vector>()),
+                               std::vector<record>>);
+
+    const auto expected = make_records<record>();
+    const auto source = gpu_array::managed_structure_of_arrays<record>(expected);
+    const auto view = const_view(source.template data<0>(), source.template data<1>(), source.template data<2>(),
+                                 source.size());
+    expect_records_eq(view.template to<std::vector>(), expected);
 }
 
 TEST(StructureOfArrays, TupleInput)
