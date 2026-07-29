@@ -459,8 +459,8 @@ namespace gpu_array
             using element_type = std::tuple_element_t<N, gpu_array::tuple<ValueTypes...>>;
 
             __host__ __device__ storage() : data_(static_cast<ValueTypes*>(nullptr)...) {}
-            __device__ explicit storage(ValueTypes*... ptr, size_type size)
-                : size_(size), data_(static_cast<ValueTypes*>(size != 0 ? ptr : nullptr)...)
+            __host__ __device__ explicit storage(ValueTypes*... ptr, size_type length)
+                : size_(length), data_(static_cast<ValueTypes*>(length != 0 ? ptr : nullptr)...)
             {
                 assert(size_ == 0 || ((ptr != nullptr) && ...));
             }
