@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <concepts>
 #include <cstdint>
 #include <ranges>
@@ -93,6 +94,29 @@ namespace
             EXPECT_FLOAT_EQ(actual[index].get_b(), expected[index].get_b());
             EXPECT_DOUBLE_EQ(actual[index].get_c(), expected[index].get_c());
         }
+    }
+
+    template <typename Soa>
+    void check_soa_host_conversions()
+    {
+        using record = typename Soa::value_type;
+        const auto expected = make_records<record>();
+        const auto value = Soa(expected);
+
+        expect_records_eq(value.template to<std::vector>(), expected);
+
+        const auto fixed_size = value.template to<std::array<record, 4>>();
+        for (auto index = std::size_t{0}; index < fixed_size.size(); ++index)
+        {
+            expect_record_eq(fixed_size[index], expected[index].get_a(), expected[index].get_b(), expected[index].get_c());
+        }
+        EXPECT_THROW((value.template to<std::array<record, 3>>()), std::runtime_error);
+
+        const auto explicit_vector = static_cast<std::vector<record>>(value);
+        expect_records_eq(explicit_vector, expected);
+
+        const auto empty = Soa();
+        EXPECT_TRUE(empty.template to<std::vector>().empty());
     }
 
     template <typename Soa>
@@ -224,6 +248,13 @@ TEST(StructureOfArrays, TupleInput)
     static_assert(std::same_as<std::ranges::range_value_t<shorthand>, gpu_array::tuple<int, float>>);
 
     SUCCEED();
+}
+
+TEST(StructureOfArrays, HostConversions)
+{
+    using record = gpu_tuple_record<int, float, double>;
+    check_soa_host_conversions<gpu_array::structure_of_arrays<record, std::uint32_t>>();
+    check_soa_host_conversions<gpu_array::managed_structure_of_arrays<record, std::uint32_t>>();
 }
 
 TEST(ManagedStructureOfArrays, GpuTupleRecord)

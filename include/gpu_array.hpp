@@ -814,6 +814,374 @@ namespace gpu_array
         template <typename T, template <typename...> typename U>
         using to_range_deduced_t = typename to_range_deduced<T, U>::type;
 
+        template <class Derived, typename ValueType, typename SizeType>
+        class device_array_conversion_interface
+        {
+            __host__ __device__ const Derived& derived() const noexcept { return static_cast<const Derived&>(*this); }
+
+        public:
+            template <gpu_array_ptr T>
+            requires std::same_as<ValueType, typename T::value_type>
+            __host__ T to() const
+            {
+                const auto& value = derived();
+                if constexpr (gpu_unmanaged_array_ptr<T>)
+                {
+                    auto result = T(value.size(), default_init);
+                    if (value.size() == 0) return result;
+
+                    assert(value.data() != nullptr);
+                    GPU_CHECK_ERROR(api::gpuMemcpy(result.data(), value.data(), sizeof(ValueType) * value.size(),
+                                                   gpuMemcpyDeviceToDevice));
+                    return result;
+                }
+                else if constexpr (gpu_managed_array_ptr<T>)
+                {
+                    auto result = T(value.size(), default_init);
+                    if (value.size() == 0) return result;
+
+                    assert(value.data() != nullptr);
+                    GPU_CHECK_ERROR(api::gpuMemcpy(result.data(), value.data(), sizeof(ValueType) * value.size(),
+                                                   gpuMemcpyDeviceToHost));
+                    return result;
+                }
+                else
+                {
+                    static_assert(always_false_v<T>, "unsupported gpu_ptr type");
+                }
+            }
+
+            template <array_convertible T>
+            requires std::same_as<ValueType, std::ranges::range_value_t<T>> &&
+                     ((std::ranges::contiguous_range<T> &&
+                       (std::is_constructible_v<T, SizeType> || std::is_default_constructible_v<T>)) ||
+                      (std::is_default_constructible_v<T> &&
+                       requires { std::declval<T>().push_back(std::declval<ValueType>()); }))
+            __host__ T to() const
+            {
+                const auto& value = derived();
+                if constexpr (std::ranges::contiguous_range<T>)
+                {
+                    auto result = []([[maybe_unused]] SizeType size) -> T {
+                        if constexpr (std::is_constructible_v<T, SizeType>)
+                            return T(size);
+                        else
+                            return T();
+                    }(value.size());
+
+                    if (std::ranges::size(result) != value.size()) throw std::runtime_error("size mismatch");
+                    GPU_CHECK_ERROR(api::gpuMemcpy(std::ranges::data(result), value.data(),
+                                                   sizeof(ValueType) * value.size(), gpuMemcpyDeviceToHost));
+                    return result;
+                }
+                else
+                {
+                    auto buffer = std::make_unique_for_overwrite<ValueType[]>(value.size());
+                    GPU_CHECK_ERROR(api::gpuMemcpy(buffer.get(), value.data(), sizeof(ValueType) * value.size(),
+                                                   gpuMemcpyDeviceToHost));
+                    auto result = T();
+                    if constexpr (requires { std::declval<T>().reserve(std::declval<std::size_t>()); })
+                    {
+                        result.reserve(value.size());
+                    }
+                    std::move(buffer.get(), buffer.get() + value.size(), std::back_inserter(result));
+                    return result;
+                }
+            }
+
+            template <gpu_array_ptr T>
+            requires std::is_constructible_v<ValueType, typename T::value_type> &&
+                     (!std::same_as<ValueType, typename T::value_type>)
+            __host__ T to() const
+            {
+                using U = typename T::value_type;
+                const auto& value = derived();
+                auto buffer = std::make_unique_for_overwrite<ValueType[]>(value.size());
+                GPU_CHECK_ERROR(api::gpuMemcpy(buffer.get(), value.data(), sizeof(ValueType) * value.size(),
+                                               gpuMemcpyDeviceToHost));
+
+                if constexpr (gpu_unmanaged_array_ptr<T>)
+                {
+                    auto result = T(value.size(), default_init);
+                    if (value.size() == 0) return result;
+
+                    auto converted = std::make_unique_for_overwrite<U[]>(value.size());
+                    assert(buffer.get() != nullptr);
+                    assert(converted.get() != nullptr);
+                    for (auto i = std::size_t{0}; i < value.size(); ++i)
+                    {
+                        std::ranges::construct_at(converted.get() + i, *(buffer.get() + i));
+                    }
+
+                    assert(result.data() != nullptr);
+                    GPU_CHECK_ERROR(api::gpuMemcpy(result.data(), converted.get(), sizeof(U) * value.size(),
+                                                   gpuMemcpyHostToDevice));
+                    return result;
+                }
+                else if constexpr (gpu_managed_array_ptr<T>)
+                {
+                    auto result = T(value.size(), default_init);
+                    if (value.size() == 0) return result;
+
+                    assert(result.data() != nullptr);
+                    for (auto i = std::size_t{0}; i < value.size(); ++i)
+                    {
+                        std::ranges::construct_at(result.data() + i, *(buffer.get() + i));
+                    }
+                    return result;
+                }
+                else
+                {
+                    static_assert(always_false_v<T>, "unsupported gpu_ptr type");
+                }
+            }
+
+            template <array_convertible T>
+            requires std::is_default_constructible_v<T> &&
+                     requires(const ValueType& value) { static_cast<std::ranges::range_value_t<T>>(value); } &&
+                     (!std::same_as<ValueType, std::ranges::range_value_t<T>>)
+            __host__ T to() const
+            {
+                using U = std::ranges::range_value_t<T>;
+                const auto& value = derived();
+                auto buffer = std::make_unique_for_overwrite<ValueType[]>(value.size());
+                GPU_CHECK_ERROR(api::gpuMemcpy(buffer.get(), value.data(), sizeof(ValueType) * value.size(),
+                                               gpuMemcpyDeviceToHost));
+
+                auto result = T();
+                if constexpr (requires { std::declval<T>().push_back(std::declval<U>()); })
+                {
+                    if constexpr (requires { std::declval<T>().reserve(std::declval<std::size_t>()); })
+                    {
+                        result.reserve(value.size());
+                    }
+                    std::transform(buffer.get(), buffer.get() + value.size(), std::back_inserter(result),
+                                   [](const ValueType& element) { return static_cast<U>(element); });
+                }
+                else
+                {
+                    if (std::ranges::size(result) != value.size()) throw std::runtime_error("size mismatch");
+                    std::transform(buffer.get(), buffer.get() + value.size(), std::ranges::begin(result),
+                                   [](const ValueType& element) { return static_cast<U>(element); });
+                }
+                return result;
+            }
+
+            template <template <typename...> typename T>
+            __host__ auto to() const
+            {
+                return to<T<ValueType>>();
+            }
+
+            template <array_convertible T>
+            requires std::is_default_constructible_v<T> &&
+                     requires(const ValueType& value) { static_cast<std::ranges::range_value_t<T>>(value); }
+            __host__ explicit operator T() const
+            {
+                return to<T>();
+            }
+        };
+
+        template <class Derived, typename ValueType, typename SizeType>
+        class managed_array_conversion_interface
+        {
+            __host__ __device__ const Derived& derived() const noexcept { return static_cast<const Derived&>(*this); }
+
+        public:
+            template <gpu_array_ptr T>
+            requires std::is_constructible_v<ValueType, typename T::value_type>
+            __host__ T to() const
+            {
+                using U = typename T::value_type;
+                const auto& value = derived();
+                if constexpr (gpu_unmanaged_array_ptr<T>)
+                {
+                    auto result = T(value.size(), default_init);
+                    if (value.size() == 0) return result;
+
+                    if constexpr (std::is_same_v<ValueType, U>)
+                    {
+                        assert(result.data() != nullptr);
+                        GPU_CHECK_ERROR(api::gpuMemcpy(result.data(), value.data(), sizeof(U) * value.size(),
+                                                       gpuMemcpyHostToDevice));
+                    }
+                    else
+                    {
+                        auto buffer = std::make_unique_for_overwrite<U[]>(value.size());
+                        assert(buffer.get() != nullptr);
+                        for (auto i = std::size_t{0}; i < value.size(); ++i)
+                        {
+                            std::ranges::construct_at(buffer.get() + i, *(value.data() + i));
+                        }
+
+                        assert(result.data() != nullptr);
+                        GPU_CHECK_ERROR(api::gpuMemcpy(result.data(), buffer.get(), sizeof(U) * value.size(),
+                                                       gpuMemcpyHostToDevice));
+                    }
+                    return result;
+                }
+                else if constexpr (gpu_managed_array_ptr<T>)
+                {
+                    auto result = T(value.size(), default_init);
+                    if (value.size() == 0) return result;
+
+                    assert(result.data() != nullptr);
+                    for (auto i = std::size_t{0}; i < value.size(); ++i)
+                    {
+                        std::ranges::construct_at(result.data() + i, *(value.data() + i));
+                    }
+                    return result;
+                }
+                else
+                {
+                    static_assert(always_false_v<T>, "unsupported gpu_ptr type");
+                }
+            }
+
+            template <array_convertible T>
+            requires (gpu_array_ptr<T> || std::is_default_constructible_v<T>) &&
+                     requires(const ValueType& value) { static_cast<std::ranges::range_value_t<T>>(value); }
+            __host__ T to() const
+            {
+                using U = std::ranges::range_value_t<T>;
+                const auto& value = derived();
+                if constexpr (requires { std::declval<T>().push_back(std::declval<U>()); })
+                {
+                    auto result = T();
+                    if constexpr (requires { std::declval<T>().reserve(std::declval<std::size_t>()); })
+                    {
+                        result.reserve(value.size());
+                    }
+                    std::ranges::transform(value, std::back_inserter(result),
+                                           [](const ValueType& element) { return static_cast<U>(element); });
+                    return result;
+                }
+                else
+                {
+                    auto result = T();
+                    if (std::ranges::size(result) != value.size()) throw std::runtime_error("size mismatch");
+                    std::ranges::transform(value, std::ranges::begin(result),
+                                           [](const ValueType& element) { return static_cast<U>(element); });
+                    return result;
+                }
+            }
+
+            template <template <typename...> typename T>
+            __host__ auto to() const
+            {
+                return to<to_range_deduced_t<Derived, T>>();
+            }
+
+            template <array_convertible T>
+            requires (gpu_array_ptr<T> || std::is_default_constructible_v<T>) &&
+                     requires(const ValueType& value) { static_cast<std::ranges::range_value_t<T>>(value); }
+            __host__ explicit operator T() const
+            {
+                return to<T>();
+            }
+        };
+
+        template <class Derived, template <typename...> typename Tuple, typename SizeType, bool Device, typename... Ts>
+        class soa_conversion_interface
+        {
+            __host__ __device__ const Derived& derived() const noexcept { return static_cast<const Derived&>(*this); }
+
+        public:
+            template <array_convertible Range>
+            requires std::is_default_constructible_v<Range> &&
+                     std::is_constructible_v<std::ranges::range_value_t<Range>, Ts...>
+            __host__ Range to() const
+            {
+                using U = std::ranges::range_value_t<Range>;
+                const auto& value = derived();
+                auto result = Range();
+
+                if constexpr (Device)
+                {
+                    const auto buffers = copy_buffers(value, std::index_sequence_for<Ts...>{});
+                    if constexpr (requires { std::declval<Range>().push_back(std::declval<U>()); })
+                    {
+                        if constexpr (requires { std::declval<Range>().reserve(std::declval<std::size_t>()); })
+                        {
+                            result.reserve(value.size());
+                        }
+                        for (SizeType index = 0; index < value.size(); ++index)
+                        {
+                            gpu_array::apply(
+                                [&result, index](const auto&... buffer) { result.push_back(U{buffer[index]...}); },
+                                buffers);
+                        }
+                    }
+                    else
+                    {
+                        if (std::ranges::size(result) != value.size()) throw std::runtime_error("size mismatch");
+                        for (SizeType index = 0; index < value.size(); ++index)
+                        {
+                            gpu_array::apply(
+                                [&result, index](const auto&... buffer) { result[index] = U{buffer[index]...}; },
+                                buffers);
+                        }
+                    }
+                }
+                else
+                {
+                    if constexpr (requires { std::declval<Range>().push_back(std::declval<U>()); })
+                    {
+                        if constexpr (requires { std::declval<Range>().reserve(std::declval<std::size_t>()); })
+                        {
+                            result.reserve(value.size());
+                        }
+                        for (SizeType index = 0; index < value.size(); ++index)
+                        {
+                            result.push_back(element<U>(value, index, std::index_sequence_for<Ts...>{}));
+                        }
+                    }
+                    else
+                    {
+                        if (std::ranges::size(result) != value.size()) throw std::runtime_error("size mismatch");
+                        for (SizeType index = 0; index < value.size(); ++index)
+                        {
+                            result[index] = element<U>(value, index, std::index_sequence_for<Ts...>{});
+                        }
+                    }
+                }
+
+                return result;
+            }
+
+            template <template <typename...> typename T>
+            __host__ auto to() const
+            {
+                return to<T<Tuple<Ts...>>>();
+            }
+
+            template <array_convertible Range>
+            requires std::is_default_constructible_v<Range> &&
+                     std::is_constructible_v<std::ranges::range_value_t<Range>, Ts...>
+            __host__ explicit operator Range() const
+            {
+                return to<Range>();
+            }
+
+        private:
+            template <std::size_t... Ns>
+            __host__ static auto copy_buffers(const Derived& value, std::index_sequence<Ns...>)
+            {
+                const auto copy_buffer = [size = value.size()]<typename T>(const T* pointer) {
+                    auto buffer = std::make_unique_for_overwrite<T[]>(size);
+                    GPU_CHECK_ERROR(api::gpuMemcpy(buffer.get(), pointer, sizeof(T) * size, gpuMemcpyDeviceToHost));
+                    return buffer;
+                };
+                return gpu_array::tuple<std::unique_ptr<Ts[]>...>(copy_buffer(value.template data<Ns>())...);
+            }
+
+            template <typename U, std::size_t... Ns>
+            __host__ static U element(const Derived& value, SizeType index, std::index_sequence<Ns...>)
+            {
+                return U{value.template data<Ns>()[index]...};
+            }
+        };
+
         template <gpu_array_ptr Array, template <typename...> typename U>
         requires gpu_array_ptr<std::ranges::range_value_t<Array>>
         struct to_range_deduced<Array, U>
@@ -859,7 +1227,8 @@ namespace gpu_array
     template <typename ValueType, typename SizeType>
     requires std::is_trivially_copyable_v<ValueType>
     class array : public detail::owning_storage<false, SizeType, ValueType>,
-                  public detail::array_access_interface<array<ValueType, SizeType>, ValueType, SizeType>
+                  public detail::array_access_interface<array<ValueType, SizeType>, ValueType, SizeType>,
+                  public detail::device_array_conversion_interface<array<ValueType, SizeType>, ValueType, SizeType>
     {
         using base = detail::owning_storage<false, SizeType, ValueType>;
 
@@ -977,173 +1346,6 @@ namespace gpu_array
             return *this;
         }
 
-        template <gpu_array_ptr T>
-        requires std::same_as<value_type, typename T::value_type>
-        __host__ T to() const
-        {
-            if constexpr (gpu_unmanaged_array_ptr<T>)
-            {
-                auto result = T(base::size_, default_init);
-                if (base::size_ == 0) return result;
-
-                assert(data() != nullptr);
-                GPU_CHECK_ERROR(
-                    api::gpuMemcpy(result.data(), data(), sizeof(value_type) * base::size_, gpuMemcpyDeviceToDevice));
-                return result;
-            }
-            else if constexpr (gpu_managed_array_ptr<T>)
-            {
-                auto result = T(base::size_, default_init);
-                if (base::size_ == 0) return result;
-
-                assert(data() != nullptr);
-                GPU_CHECK_ERROR(
-                    api::gpuMemcpy(result.data(), data(), sizeof(value_type) * base::size_, gpuMemcpyDeviceToHost));
-                return result;
-            }
-            else
-            {
-                static_assert(detail::always_false_v<T>, "unsupported gpu_ptr type");
-            }
-        }
-
-        template <detail::array_convertible T>
-        requires std::same_as<value_type, std::ranges::range_value_t<T>> &&
-                 ((std::ranges::contiguous_range<T> &&
-                   (std::is_constructible_v<T, size_type> || std::is_default_constructible_v<T>)) ||
-                  (std::is_default_constructible_v<T> &&
-                   requires { std::declval<T>().push_back(std::declval<value_type>()); }))
-        __host__ T to() const
-        {
-            if constexpr (std::ranges::contiguous_range<T>)
-            {
-                auto result = []([[maybe_unused]] size_type size) -> T {
-                    if constexpr (std::is_constructible_v<T, size_type>)
-                    {
-                        // std::vector like type
-                        return T(size);
-                    }
-                    else
-                    {
-                        // std::array like type
-                        return T();
-                    }
-                }(this->size_);
-
-                if (std::ranges::size(result) != base::size_) throw std::runtime_error("size mismatch");
-                GPU_CHECK_ERROR(api::gpuMemcpy(std::ranges::data(result), data(), sizeof(value_type) * base::size_,
-                                               gpuMemcpyDeviceToHost));
-                return result;
-            }
-            else
-            {
-                // std::list like type
-                static_assert(requires { std::declval<T>().push_back(std::declval<ValueType>()); });
-                auto buf = std::make_unique_for_overwrite<ValueType[]>(base::size_);
-                GPU_CHECK_ERROR(
-                    api::gpuMemcpy(buf.get(), data(), sizeof(ValueType) * base::size_, gpuMemcpyDeviceToHost));
-
-                auto result = T();
-                if constexpr (requires { std::declval<T>().reserve(std::declval<std::size_t>()); })
-                {
-                    result.reserve(base::size_);
-                }
-                std::move(buf.get(), buf.get() + base::size_, std::back_inserter(result));
-                return result;
-            }
-        }
-
-        template <gpu_array_ptr T>
-        requires std::is_constructible_v<value_type, typename T::value_type> &&
-                 (!std::same_as<value_type, typename T::value_type>)
-        __host__ T to() const
-        {
-            using U = typename T::value_type;
-            auto buf = std::make_unique_for_overwrite<value_type[]>(base::size_);
-            GPU_CHECK_ERROR(api::gpuMemcpy(buf.get(), data(), sizeof(value_type) * base::size_, gpuMemcpyDeviceToHost));
-
-            if constexpr (gpu_unmanaged_array_ptr<T>)
-            {
-                auto result = T(base::size_, default_init);
-                if (base::size_ == 0) return result;
-
-                auto buf2 = std::make_unique_for_overwrite<U[]>(base::size_);
-                assert(buf.get() != nullptr);
-                assert(buf2.get() != nullptr);
-                for (auto i = std::size_t{0}; i < base::size_; ++i)
-                {
-                    std::ranges::construct_at(buf2.get() + i, *(buf.get() + i));
-                }
-
-                assert(result.data() != nullptr);
-                GPU_CHECK_ERROR(
-                    api::gpuMemcpy(result.data(), buf2.get(), sizeof(U) * base::size_, gpuMemcpyHostToDevice));
-                return result;
-            }
-            else if constexpr (gpu_managed_array_ptr<T>)
-            {
-                auto result = T(base::size_, default_init);
-                if (base::size_ == 0) return result;
-
-                assert(result.data() != nullptr);
-                for (auto i = std::size_t{0}; i < base::size_; ++i)
-                {
-                    std::ranges::construct_at(result.data() + i, *(buf.get() + i));
-                }
-                return result;
-            }
-            else
-            {
-                static_assert(detail::always_false_v<T>, "unsupported gpu_ptr type");
-            }
-        }
-
-        template <detail::array_convertible T>
-        requires std::is_default_constructible_v<T> &&
-                 requires(const value_type& v) { static_cast<std::ranges::range_value_t<T>>(v); } &&
-                 (!std::same_as<value_type, std::ranges::range_value_t<T>>)
-        __host__ T to() const
-        {
-            using U = std::ranges::range_value_t<T>;
-            auto buf = std::make_unique_for_overwrite<value_type[]>(base::size_);
-            GPU_CHECK_ERROR(api::gpuMemcpy(buf.get(), data(), sizeof(value_type) * base::size_, gpuMemcpyDeviceToHost));
-
-            if constexpr (requires { std::declval<T>().push_back(std::declval<U>()); })
-            {
-                // back insertable type
-                auto result = T();
-                if constexpr (requires { std::declval<T>().reserve(std::declval<std::size_t>()); })
-                {
-                    result.reserve(base::size_);
-                }
-                std::transform(buf.get(), buf.get() + base::size_, std::back_inserter(result),
-                               [](const value_type& v) { return static_cast<U>(v); });
-                return result;
-            }
-            else
-            {
-                // std::array like type
-                auto result = T();
-                if (std::ranges::size(result) != base::size_) throw std::runtime_error("size mismatch");
-                std::transform(buf.get(), buf.get() + base::size_, std::ranges::begin(result),
-                               [](const value_type& v) { return static_cast<U>(v); });
-                return result;
-            }
-        }
-
-        template <template <typename...> typename T>
-        __host__ auto to() const
-        {
-            return to<T<value_type>>();
-        }
-
-        template <typename T>
-        requires (!gpu_ptr<T>) && requires(const array& self) { self.to<T>(); }
-        __host__ explicit operator T() const
-        {
-            return to<T>();
-        }
-
 #if defined(GPU_OVERLOAD_HOST)
         __host__ array(pointer ptr, std::size_t size) : base(size)
         {
@@ -1184,7 +1386,9 @@ namespace gpu_array
     template <typename ValueType, typename SizeType>
     class managed_array : public detail::owning_storage<true, SizeType, ValueType>,
                           public detail::array_access_interface<managed_array<ValueType, SizeType>, ValueType, SizeType>,
-                          public detail::managed_memory_interface<managed_array<ValueType, SizeType>, SizeType>
+                          public detail::managed_memory_interface<managed_array<ValueType, SizeType>, SizeType>,
+                          public detail::managed_array_conversion_interface<managed_array<ValueType, SizeType>, ValueType,
+                                                                            SizeType>
     {
         using base = detail::owning_storage<true, SizeType, ValueType>;
         friend class detail::managed_memory_interface<managed_array<ValueType, SizeType>, SizeType>;
@@ -1341,97 +1545,6 @@ namespace gpu_array
             }
         }
     public:
-        template <gpu_array_ptr T>
-        requires std::is_constructible_v<value_type, typename T::value_type>
-        __host__ T to() const
-        {
-            using U = typename T::value_type;
-            if constexpr (gpu_unmanaged_array_ptr<T>)
-            {
-                auto result = T(base::size_, default_init);
-                if (base::size_ == 0) return result;
-
-                if constexpr (std::is_same_v<value_type, U>)
-                {
-                    assert(result.data() != nullptr);
-                    GPU_CHECK_ERROR(
-                        api::gpuMemcpy(result.data(), data(), sizeof(U) * base::size_, gpuMemcpyHostToDevice));
-                }
-                else
-                {
-                    auto buf = std::make_unique_for_overwrite<U[]>(base::size_);
-                    assert(buf.get() != nullptr);
-                    for (auto i = std::size_t{0}; i < base::size_; ++i)
-                    {
-                        std::ranges::construct_at(buf.get() + i, *(data() + i));
-                    }
-
-                    assert(result.data() != nullptr);
-                    GPU_CHECK_ERROR(
-                        api::gpuMemcpy(result.data(), buf.get(), sizeof(U) * base::size_, gpuMemcpyHostToDevice));
-                }
-                return result;
-            }
-            else if constexpr (gpu_managed_array_ptr<T>)
-            {
-                auto result = T(base::size_, default_init);
-                if (base::size_ == 0) return result;
-
-                assert(result.data() != nullptr);
-                for (auto i = std::size_t{0}; const auto& v : *this)
-                {
-                    std::ranges::construct_at(result.data() + i++, v);
-                }
-                return result;
-            }
-            else
-            {
-                static_assert(detail::always_false_v<T>, "unsupported gpu_ptr type");
-            }
-        }
-
-        template <detail::array_convertible T>
-        requires (gpu_array_ptr<T> || std::is_default_constructible_v<T>) &&
-                 requires(const value_type& v) { static_cast<std::ranges::range_value_t<T>>(v); }
-        __host__ T to() const
-        {
-            using U = std::ranges::range_value_t<T>;
-            if constexpr (requires { std::declval<T>().push_back(std::declval<U>()); })
-            {
-                // back insertable type
-                auto result = T();
-                if constexpr (requires { std::declval<T>().reserve(std::declval<std::size_t>()); })
-                {
-                    result.reserve(base::size_);
-                }
-                std::ranges::transform(*this, std::back_inserter(result),
-                                       [](const value_type& v) { return static_cast<U>(v); });
-                return result;
-            }
-            else
-            {
-                // std::array like type
-                auto result = T();
-                if (std::ranges::size(result) != base::size_) throw std::runtime_error("size mismatch");
-                std::ranges::transform(*this, std::ranges::begin(result),
-                                       [](const value_type& v) { return static_cast<U>(v); });
-                return result;
-            }
-        }
-
-        template <template <typename...> typename U>
-        __host__ auto to() const
-        {
-            return to<detail::to_range_deduced_t<managed_array, U>>();
-        }
-
-        template <typename T>
-        requires (!gpu_ptr<T>) && requires(const managed_array& self) { self.to<T>(); }
-        __host__ explicit operator T() const
-        {
-            return to<T>();
-        }
-
 #if defined(GPU_OVERLOAD_HOST)
         __host__ managed_array(pointer ptr, std::size_t size) : base(size)
         {
@@ -1986,12 +2099,12 @@ namespace gpu_array
             template <class Self, std::size_t... Ns>
             __host__ __device__ static auto pointer_tuple(Self& self, std::index_sequence<Ns...>)
             {
-                return gpu_array::tuple{self.template data<Ns>()...};
+                return gpu_array::tuple<decltype(self.template data<Ns>())...>{self.template data<Ns>()...};
             }
             template <class Self, std::size_t... Ns>
             __host__ __device__ static auto pointer_tuple(Self& self, size_type offset, std::index_sequence<Ns...>)
             {
-                return gpu_array::tuple{(self.template data<Ns>() + offset)...};
+                return gpu_array::tuple<decltype(self.template data<Ns>())...>{(self.template data<Ns>() + offset)...};
             }
             template <class Self, std::size_t... Ns>
             __host__ __device__ static decltype(auto) element_reference(Self& self, size_type index,
@@ -2041,7 +2154,9 @@ namespace gpu_array
                  std::constructible_from<Tuple<const Ts&...>, const Ts&...> && (std::is_trivially_copyable_v<Ts> && ...)
     class structure_of_arrays<Tuple<Ts...>, SizeType>
         : public detail::owning_storage<false, SizeType, Ts...>,
-          public detail::soa_access_interface<structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType, Ts...>
+          public detail::soa_access_interface<structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType, Ts...>,
+          public detail::soa_conversion_interface<structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType, true,
+                                                  Ts...>
     {
         static constexpr auto num_arrays = sizeof...(Ts);
         using base = detail::owning_storage<false, SizeType, Ts...>;
@@ -2229,68 +2344,7 @@ namespace gpu_array
             return *this;
         }
 
-        template <detail::array_convertible Range>
-        requires std::is_default_constructible_v<Range> &&
-                 std::is_constructible_v<std::ranges::range_value_t<Range>, Ts...>
-        __host__ Range to() const
-        {
-            using U = std::ranges::range_value_t<Range>;
-            const auto copy_buffer = [this]<typename T>(const T* ptr) {
-                auto buf = std::make_unique_for_overwrite<T[]>(base::size_);
-                GPU_CHECK_ERROR(api::gpuMemcpy(buf.get(), ptr, sizeof(T) * base::size_, gpuMemcpyDeviceToHost));
-                return buf;
-            };
-
-            const auto tmp_bufs = gpu_array::apply(
-                [copy_buffer](const auto*... ptrs) {
-                    return gpu_array::tuple<std::unique_ptr<Ts[]>...>(copy_buffer(ptrs)...);
-                },
-                base::data_);
-
-            auto result = Range();
-
-            if constexpr (requires { std::declval<Range>().push_back(std::declval<U>()); })
-            {
-                // back insert-able type
-                if constexpr (requires { std::declval<Range>().reserve(std::declval<std::size_t>()); })
-                {
-                    result.reserve(base::size_);
-                }
-
-                for (size_type i = 0; i < base::size_; ++i)
-                {
-                    gpu_array::apply([&result, i](const auto&... bufs) { result.push_back(U{bufs[i]...}); }, tmp_bufs);
-                }
-
-                return result;
-            }
-            else
-            {
-                // std::array like type
-                if (std::ranges::size(result) != base::size_) throw std::runtime_error("size mismatch");
-
-                for (size_type i = 0; i < base::size_; ++i)
-                {
-                    gpu_array::apply([&result, i](const auto&... bufs) { result[i] = U{bufs[i]...}; }, tmp_bufs);
-                }
-
-                return result;
-            }
-        }
-
-        template <template <typename...> typename T>
-        __host__ auto to() const
-        {
-            return to<T<Tuple<Ts...>>>();
-        }
-
-        template <typename T>
-        requires (!gpu_ptr<T>) && requires(const structure_of_arrays& self) { self.to<T>(); }
-        __host__ explicit operator T() const
-        {
-            return to<T>();
-        }
-
+    public:
         template <std::size_t N>
         __device__ void reset(std::tuple_element_t<N, tuple_pointer_type> ptr)
         {
@@ -2351,7 +2405,9 @@ namespace gpu_array
         : public detail::owning_storage<true, SizeType, Ts...>,
           public detail::soa_access_interface<managed_structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType,
                                               Ts...>,
-          public detail::managed_memory_interface<managed_structure_of_arrays<Tuple<Ts...>, SizeType>, SizeType>
+                    public detail::managed_memory_interface<managed_structure_of_arrays<Tuple<Ts...>, SizeType>, SizeType>,
+                    public detail::soa_conversion_interface<managed_structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType,
+                                                                                                    false, Ts...>
     {
         static constexpr auto num_arrays = sizeof...(Ts);
         using base = detail::owning_storage<true, SizeType, Ts...>;
@@ -2626,57 +2682,6 @@ namespace gpu_array
             });
         }
     public:
-        template <detail::array_convertible Range>
-        requires std::is_default_constructible_v<Range> &&
-                 std::is_constructible_v<std::ranges::range_value_t<Range>, Ts...>
-        __host__ Range to() const
-        {
-            using U = std::ranges::range_value_t<Range>;
-            auto result = Range();
-
-            if constexpr (requires { std::declval<Range>().push_back(std::declval<U>()); })
-            {
-                // back insertable type
-                if constexpr (requires { std::declval<Range>().reserve(std::declval<std::size_t>()); })
-                {
-                    result.reserve(base::size_);
-                }
-
-                for (size_type i = 0; i < base::size_; ++i)
-                {
-                    gpu_array::apply([&result, i](const auto&... bufs) { result.push_back(U{bufs[i]...}); },
-                                     base::data_);
-                }
-
-                return result;
-            }
-            else
-            {
-                // std::array like type
-                if (std::ranges::size(result) != base::size_) throw std::runtime_error("size mismatch");
-
-                for (size_type i = 0; i < base::size_; ++i)
-                {
-                    gpu_array::apply([&result, i](const auto&... bufs) { result[i] = U{bufs[i]...}; }, base::data_);
-                }
-
-                return result;
-            }
-        }
-
-        template <template <typename...> typename T>
-        __host__ auto to() const
-        {
-            return to<T<Tuple<Ts...>>>();
-        }
-
-        template <typename T>
-        requires (!gpu_ptr<T>) && requires(const managed_structure_of_arrays& self) { self.to<T>(); }
-        __host__ explicit operator T() const
-        {
-            return to<T>();
-        }
-
         template <std::size_t N>
         __device__ void reset(std::tuple_element_t<N, tuple_pointer_type> ptr)
         {
