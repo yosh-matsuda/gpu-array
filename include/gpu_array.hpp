@@ -1230,6 +1230,133 @@ namespace gpu_array
             __host__ __device__ bool empty() const noexcept { return size_ == 0; }
             __host__ __device__ decltype(auto) operator[](SizeType index) const noexcept { return begin_[index]; }
         };
+
+        template <typename SizeType>
+        __host__ SizeType checked_view_size(std::size_t size)
+        {
+            if (std::numeric_limits<SizeType>::max() < size) throw std::runtime_error("size overflow");
+            return static_cast<SizeType>(size);
+        }
+
+        template <bool Unified, typename Pointer>
+        __host__ void validate_view_pointer(Pointer ptr, std::size_t size)
+        {
+            if (size == 0) return;
+
+            auto attr = api::gpuPointerAttributes{};
+            GPU_CHECK_ERROR(api::gpuPointerGetAttributes(&attr, ptr));
+            constexpr auto expected = Unified ? api::gpuMemoryType::Managed : api::gpuMemoryType::Device;
+            if (static_cast<api::gpuMemoryType>(attr.type) != expected)
+            {
+                throw std::runtime_error(Unified ? "pointer type mismatch: expected managed memory pointer"
+                                                 : "pointer type mismatch: expected device memory pointer");
+            }
+        }
+
+        class empty_interface
+        {
+        };
+
+        template <typename ValueType, typename SizeType, bool Unified, bool Const>
+        class basic_array_view
+            : protected storage<SizeType, std::conditional_t<Const, const ValueType, ValueType>>,
+              public memory_kind<Unified>,
+              public array_access_interface<basic_array_view<ValueType, SizeType, Unified, Const>, ValueType,
+                                            SizeType, Const>,
+              public std::conditional_t<Unified,
+                                        managed_array_conversion_interface<
+                                            basic_array_view<ValueType, SizeType, Unified, Const>, ValueType,
+                                            SizeType>,
+                                        device_array_conversion_interface<
+                                            basic_array_view<ValueType, SizeType, Unified, Const>, ValueType,
+                                            SizeType>>,
+              public std::conditional_t<Unified,
+                                        managed_memory_interface<basic_array_view<ValueType, SizeType, Unified, Const>,
+                                                                 SizeType>,
+                                        empty_interface>
+        {
+            using storage_base = storage<SizeType, std::conditional_t<Const, const ValueType, ValueType>>;
+            using access =
+                array_access_interface<basic_array_view<ValueType, SizeType, Unified, Const>, ValueType, SizeType,
+                                       Const>;
+            using managed_memory =
+                managed_memory_interface<basic_array_view<ValueType, SizeType, Unified, Const>, SizeType>;
+
+            friend managed_memory;
+
+            static constexpr auto has_prefetch =
+                requires(const ValueType& value, int device_id, api::gpuStream_t stream) {
+                    value.prefetch(device_id, stream);
+                };
+            static constexpr auto has_mem_advise =
+                requires(const ValueType& value, api::gpuMemoryAdvise advise, int device_id) {
+                    value.mem_advise(advise, device_id);
+                };
+
+        public:
+            using typename access::const_pointer;
+            using typename access::const_reference;
+            using typename access::pointer;
+            using typename access::reference;
+            using typename access::size_type;
+            using typename access::value_type;
+            using storage_base::empty;
+            using storage_base::size;
+
+            basic_array_view() = default;
+
+#if defined(GPU_OVERLOAD_HOST)
+            __host__ basic_array_view(pointer ptr, std::size_t size)
+                : storage_base(ptr, checked_view_size<SizeType>(size))
+            {
+                validate_view_pointer<Unified>(ptr, size);
+            }
+#endif
+#if defined(GPU_OVERLOAD_DEVICE)
+            __device__ basic_array_view(pointer ptr, size_type size) : storage_base(ptr, size) {}
+#endif
+
+            __host__ __device__ pointer data() noexcept { return gpu_array::get<0>(storage_base::data_); }
+            __host__ __device__ const_pointer data() const noexcept { return gpu_array::get<0>(storage_base::data_); }
+
+        protected:
+            __host__ void prefetch_range(size_type n, size_type length, int device_id, api::gpuStream_t stream,
+                                         bool recursive) const
+            requires Unified
+            {
+                assert(n <= size() && length <= size() - n);
+                if (length == 0) return;
+                GPU_CHECK_ERROR(api::gpuMemPrefetchAsync(data() + n, sizeof(value_type) * length, device_id, stream));
+                if constexpr (has_prefetch)
+                {
+                    if (recursive)
+                        for (auto index = n; index < n + length; ++index) data()[index].prefetch(device_id, stream);
+                }
+            }
+            __host__ void prefetch_all(int device_id, api::gpuStream_t stream, bool recursive) const
+            requires Unified
+            {
+                prefetch_range(0, size(), device_id, stream, recursive);
+            }
+            __host__ void mem_advise_range(size_type n, size_type length, api::gpuMemoryAdvise advise, int device_id,
+                                           bool recursive) const
+            requires Unified
+            {
+                assert(n <= size() && length <= size() - n);
+                if (length == 0) return;
+                GPU_CHECK_ERROR(api::gpuMemAdvise(data() + n, sizeof(value_type) * length, advise, device_id));
+                if constexpr (has_mem_advise)
+                {
+                    if (recursive)
+                        for (auto index = n; index < n + length; ++index) data()[index].mem_advise(advise, device_id);
+                }
+            }
+            __host__ void mem_advise_all(api::gpuMemoryAdvise advise, int device_id, bool recursive) const
+            requires Unified
+            {
+                mem_advise_range(0, size(), advise, device_id, recursive);
+            }
+        };
     }  // namespace detail
 
     using detail::gpu_array_ptr;
@@ -1239,6 +1366,17 @@ namespace gpu_array
     using detail::gpu_ptr;
     using detail::gpu_unmanaged_array_ptr;
     using detail::gpu_unmanaged_ptr;
+
+    template <typename ValueType, typename SizeType = size_type_default>
+    requires std::is_trivially_copyable_v<ValueType>
+    using array_view = detail::basic_array_view<ValueType, SizeType, false, false>;
+    template <typename ValueType, typename SizeType = size_type_default>
+    requires std::is_trivially_copyable_v<ValueType>
+    using const_array_view = detail::basic_array_view<ValueType, SizeType, false, true>;
+    template <typename ValueType, typename SizeType = size_type_default>
+    using managed_array_view = detail::basic_array_view<ValueType, SizeType, true, false>;
+    template <typename ValueType, typename SizeType = size_type_default>
+    using const_managed_array_view = detail::basic_array_view<ValueType, SizeType, true, true>;
 
     template <typename ValueType, typename SizeType>
     requires std::is_trivially_copyable_v<ValueType>
@@ -3881,6 +4019,9 @@ template <typename... Ts>
 inline constexpr bool std::ranges::enable_view<gpu_array::array<Ts...>> = true;
 template <typename... Ts>
 inline constexpr bool std::ranges::enable_view<gpu_array::managed_array<Ts...>> = true;
+template <typename ValueType, typename SizeType, bool Unified, bool Const>
+inline constexpr bool std::ranges::enable_view<gpu_array::detail::basic_array_view<ValueType, SizeType, Unified,
+                                                                                     Const>> = true;
 template <typename... Ts>
 inline constexpr bool std::ranges::enable_view<gpu_array::structure_of_arrays<Ts...>> = true;
 template <typename... Ts>
@@ -3892,6 +4033,9 @@ template <typename... Ts>
 inline constexpr bool std::ranges::enable_borrowed_range<gpu_array::array<Ts...>> = true;
 template <typename... Ts>
 inline constexpr bool std::ranges::enable_borrowed_range<gpu_array::managed_array<Ts...>> = true;
+template <typename ValueType, typename SizeType, bool Unified, bool Const>
+inline constexpr bool std::ranges::enable_borrowed_range<gpu_array::detail::basic_array_view<ValueType, SizeType,
+                                                                                               Unified, Const>> = true;
 template <typename... Ts>
 inline constexpr bool std::ranges::enable_borrowed_range<gpu_array::structure_of_arrays<Ts...>> = true;
 template <typename... Ts>

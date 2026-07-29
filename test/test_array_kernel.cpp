@@ -127,6 +127,23 @@ TEST(ArrayKernel, WritesDeviceOnlyArray)
     expect_vector(values, expected);
 }
 
+TEST(ArrayViewKernel, WritesThroughPublicView)
+{
+    constexpr auto size = std::uint32_t{29};
+    auto values = device_int_array(size, 0);
+    auto view = gpu_array::array_view<int, std::uint32_t>(values.data(), values.size());
+
+    write_indices_kernel<<<3, 5>>>(view, 17);
+    synchronize();
+
+    auto expected = std::vector<int>(size);
+    for (auto index = std::size_t{0}; index < expected.size(); ++index)
+    {
+        expected[index] = static_cast<int>(index) + 17;
+    }
+    expect_vector(values, expected);
+}
+
 TEST(ArrayKernel, UsesDevicePointerAndIteratorSurface)
 {
     const auto source = std::vector<int>{1, 4, 9, 16, 25, 36, 49, 64, 81, 100, 121, 144, 169};
@@ -150,6 +167,24 @@ TEST(ManagedArrayKernel, ReadsConstDeviceSurface)
     auto destination = managed_int_array(source_values.size(), 0);
 
     copy_from_const_surface_kernel<<<3, 4>>>(source, destination);
+    synchronize();
+
+    auto expected = source_values;
+    for (auto& value : expected)
+    {
+        value = value * 2 + static_cast<int>(source_values.size());
+    }
+    expect_vector(destination, expected);
+}
+
+TEST(ManagedArrayViewKernel, ReadsConstPublicView)
+{
+    const auto source_values = std::vector<int>{2, 7, 1, 8, 2, 8};
+    auto source = managed_int_array(source_values);
+    auto destination = managed_int_array(source_values.size(), 0);
+    auto view = gpu_array::const_managed_array_view<int, std::uint32_t>(source.data(), source.size());
+
+    copy_from_const_surface_kernel<<<2, 4>>>(view, destination);
     synchronize();
 
     auto expected = source_values;

@@ -18,32 +18,14 @@ namespace
     using device_array = gpu_array::array<int, std::uint32_t>;
     using managed_int_array = gpu_array::managed_array<int, std::uint32_t>;
 
-    template <typename ValueType, bool Unified, bool Const = false>
-    class non_owning_array_view
-        : public gpu_array::detail::memory_kind<Unified>,
-          public gpu_array::detail::array_access_interface<non_owning_array_view<ValueType, Unified, Const>,
-                                                           ValueType, std::uint32_t, Const>,
-          public std::conditional_t<Unified,
-                                    gpu_array::detail::managed_array_conversion_interface<
-                                        non_owning_array_view<ValueType, Unified, Const>, ValueType, std::uint32_t>,
-                                    gpu_array::detail::device_array_conversion_interface<
-                                        non_owning_array_view<ValueType, Unified, Const>, ValueType, std::uint32_t>>
-    {
-        using data_pointer = std::conditional_t<Const, const ValueType*, ValueType*>;
-
-        data_pointer data_;
-        std::uint32_t size_;
-
-    public:
-        __host__ __device__ non_owning_array_view(data_pointer data, std::uint32_t size) : data_(data), size_(size) {}
-
-        __host__ __device__ data_pointer data() noexcept { return data_; }
-        __host__ __device__ const ValueType* data() const noexcept { return data_; }
-        __host__ __device__ std::uint32_t size() const noexcept { return size_; }
-    };
-
     template <typename T>
     concept valid_device_array_value = requires { sizeof(gpu_array::array<T>); };
+
+    template <typename T>
+    concept has_use_count = requires(T value) { value.use_count(); };
+
+    template <typename T>
+    concept has_reset = requires(T value) { value.reset(); };
 
     template <typename Array>
     constexpr void check_array_range_concepts()
@@ -307,7 +289,7 @@ TEST(ArrayCommon, CrossMemoryConversions)
 
 TEST(ArrayViewPreparation, ClassifiesDeviceViewsAsGpuRanges)
 {
-    using device_view = non_owning_array_view<int, false>;
+    using device_view = gpu_array::array_view<int, std::uint32_t>;
 
     static_assert(gpu_array::detail::gpu_ptr<device_view>);
     static_assert(gpu_array::detail::gpu_unmanaged_ptr<device_view>);
@@ -323,7 +305,8 @@ TEST(ArrayViewPreparation, MaterializesNestedManagedViews)
 {
     const auto expected = std::vector<std::vector<int>>{{1, 2, 3}, {4}, {}, {5, 6}};
     auto source = gpu_array::managed_array(expected);
-    auto view = non_owning_array_view<gpu_array::managed_array<int>, true>(source.data(), source.size());
+    auto view = gpu_array::managed_array_view<gpu_array::managed_array<int>, std::uint32_t>(source.data(),
+                                                                                               source.size());
 
     static_assert(gpu_array::detail::gpu_managed_random_access_range<decltype(view)>);
     static_assert(std::same_as<decltype(view.template to<std::vector>()), std::vector<std::vector<int>>>);
@@ -332,8 +315,8 @@ TEST(ArrayViewPreparation, MaterializesNestedManagedViews)
 
 TEST(ArrayViewPreparation, ConstViewTypesAndMaterialization)
 {
-    using const_view = non_owning_array_view<int, true, true>;
-    using const_device_view = non_owning_array_view<int, false, true>;
+    using const_view = gpu_array::const_managed_array_view<int, std::uint32_t>;
+    using const_device_view = gpu_array::const_array_view<int, std::uint32_t>;
 
     static_assert(std::same_as<const_view::value_type, int>);
     static_assert(std::same_as<const_view::pointer, const int*>);
@@ -354,6 +337,73 @@ TEST(ArrayViewPreparation, ConstViewTypesAndMaterialization)
     const auto device_source = device_array(std::vector<int>{11, 13});
     const auto device_view = const_device_view(device_source.data(), device_source.size());
     EXPECT_EQ(device_view.template to<std::vector<long>>(), (std::vector<long>{11L, 13L}));
+}
+
+TEST(ArrayView, PublicRangeAndOwnershipContract)
+{
+    using device_view = gpu_array::array_view<int, std::uint32_t>;
+    using managed_view = gpu_array::managed_array_view<int, std::uint32_t>;
+    using const_device_view = gpu_array::const_array_view<int, std::uint32_t>;
+    using const_managed_view = gpu_array::const_managed_array_view<int, std::uint32_t>;
+
+    static_assert(std::ranges::view<device_view>);
+    static_assert(std::ranges::contiguous_range<device_view>);
+    static_assert(std::ranges::output_range<device_view, int>);
+    static_assert(std::ranges::view<managed_view>);
+    static_assert(std::ranges::contiguous_range<managed_view>);
+    static_assert(std::ranges::output_range<managed_view, int>);
+    static_assert(std::ranges::view<const_device_view>);
+    static_assert(std::ranges::contiguous_range<const_device_view>);
+    static_assert(!std::ranges::output_range<const_device_view, int>);
+    static_assert(std::ranges::view<const_managed_view>);
+    static_assert(std::ranges::contiguous_range<const_managed_view>);
+    static_assert(!std::ranges::output_range<const_managed_view, int>);
+    static_assert(!gpu_array::detail::gpu_array_ptr<device_view>);
+    static_assert(!gpu_array::detail::gpu_array_ptr<managed_view>);
+    static_assert(!has_use_count<device_view>);
+    static_assert(!has_reset<managed_view>);
+
+    const auto empty = managed_view(nullptr, 0U);
+    EXPECT_TRUE(empty.empty());
+    EXPECT_EQ(empty.data(), nullptr);
+
+    auto values = managed_int_array{2, 3, 5, 7};
+    auto view = managed_view(values.data(), values.size());
+    auto copy = view;
+    view[1] = 30;
+    copy.back() = 70;
+    EXPECT_EQ(values.template to<std::vector>(), (std::vector<int>{2, 30, 5, 70}));
+    EXPECT_EQ(view.template to<std::vector>(), (std::vector<int>{2, 30, 5, 70}));
+}
+
+TEST(ArrayView, ValidatesMemoryKind)
+{
+    auto device_values = device_array{1, 2};
+    auto managed_values = managed_int_array{3, 4};
+
+    EXPECT_THROW((gpu_array::array_view<int, std::uint32_t>(managed_values.data(), managed_values.size())),
+                 std::runtime_error);
+    EXPECT_THROW((gpu_array::managed_array_view<int, std::uint32_t>(device_values.data(), device_values.size())),
+                 std::runtime_error);
+}
+
+TEST(ManagedArrayView, RecursiveMemoryManagement)
+{
+    auto values = gpu_array::managed_array<recursive_memory_ops_element, std::uint32_t>(3, gpu_array::default_init);
+    auto view = gpu_array::managed_array_view<recursive_memory_ops_element, std::uint32_t>(values.data(),
+                                                                                             values.size());
+    auto device_id = 0;
+    GPU_CHECK_ERROR(gpu_array::api::gpuGetDevice(&device_id));
+
+    view.prefetch(1, 2, device_id, 0, true);
+    EXPECT_EQ(values[0].prefetch_count, 0);
+    EXPECT_EQ(values[1].prefetch_count, 1);
+    EXPECT_EQ(values[2].prefetch_count, 1);
+
+    view.mem_advise(0, 2, gpu_array::api::gpuMemoryAdvise::SetReadMostly, device_id, true);
+    EXPECT_EQ(values[0].mem_advise_count, 1);
+    EXPECT_EQ(values[1].mem_advise_count, 1);
+    EXPECT_EQ(values[2].mem_advise_count, 0);
 }
 
 TEST(ManagedArray, HostAccess)
