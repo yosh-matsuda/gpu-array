@@ -420,6 +420,11 @@ namespace gpu_array
         template <typename>
         constexpr bool always_false_v = false;
 
+        template <bool Unified>
+        class memory_kind
+        {
+        };
+
         __host__ inline int get_device_count()
         {
             int device_count;
@@ -477,7 +482,7 @@ namespace gpu_array
 
         template <bool Unified, typename SizeType, typename... ValueTypes>
         requires (sizeof...(ValueTypes) > 0)
-        class owning_storage : protected storage<SizeType, ValueTypes...>
+        class owning_storage : protected storage<SizeType, ValueTypes...>, public memory_kind<Unified>
         {
             using storage_type = storage<SizeType, ValueTypes...>;
 
@@ -614,10 +619,10 @@ namespace gpu_array
                 r.init();
                 r.ref_count_ = nullptr;
             }
-            __device__ explicit owning_storage(ValueTypes*... ptr, size_type size) : storage_type(ptr..., size) {}
-            __host__ explicit owning_storage(std::size_t size) : storage_type()
+            __device__ explicit owning_storage(ValueTypes*... ptr, size_type length) : storage_type(ptr..., length) {}
+            __host__ explicit owning_storage(std::size_t length) : storage_type()
             {
-                size_ = checked_size(size);
+                size_ = checked_size(length);
                 ref_count_ = size_ == 0 ? nullptr : new std::uint32_t(1);
                 (INCR_GPU_MEMORY_USAGE(sizeof(ValueTypes) * size_), ...);
             }
@@ -744,16 +749,14 @@ namespace gpu_array
             }
         };
 
-        template <bool Unified, typename SizeType, typename... ValueType>
-        constexpr void is_ptr_helper(const detail::owning_storage<Unified, SizeType, ValueType...>&)
+        template <bool Unified>
+        constexpr void is_ptr_helper(const memory_kind<Unified>&)
         {
         }
-        template <typename SizeType, typename... ValueType>
-        constexpr void is_managed_ptr_helper(const detail::owning_storage<true, SizeType, ValueType...>&)
+        constexpr void is_managed_ptr_helper(const memory_kind<true>&)
         {
         }
-        template <typename SizeType, typename... ValueType>
-        constexpr void is_unmanaged_ptr_helper(const detail::owning_storage<false, SizeType, ValueType...>&)
+        constexpr void is_unmanaged_ptr_helper(const memory_kind<false>&)
         {
         }
         template <bool Unified, typename SizeType, typename ValueType>
@@ -813,6 +816,20 @@ namespace gpu_array
         };
         template <typename T, template <typename...> typename U>
         using to_range_deduced_t = typename to_range_deduced<T, U>::type;
+
+        template <typename T, template <typename...> typename U>
+        struct to_range_value_deduced
+        {
+            using type = U<T>;
+        };
+        template <typename T, template <typename...> typename U>
+        requires requires(const T& value) { value.template to<U>(); }
+        struct to_range_value_deduced<T, U>
+        {
+            using type = U<decltype(std::declval<const T&>().template to<U>())>;
+        };
+        template <typename T, template <typename...> typename U>
+        using to_range_value_deduced_t = typename to_range_value_deduced<T, U>::type;
 
         template <class Derived, typename ValueType, typename SizeType>
         class device_array_conversion_interface
@@ -1069,7 +1086,7 @@ namespace gpu_array
             template <template <typename...> typename T>
             __host__ auto to() const
             {
-                return to<to_range_deduced_t<Derived, T>>();
+                return to<to_range_value_deduced_t<ValueType, T>>();
             }
 
             template <array_convertible T>

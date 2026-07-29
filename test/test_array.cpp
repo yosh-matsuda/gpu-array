@@ -18,6 +18,28 @@ namespace
     using device_array = gpu_array::array<int, std::uint32_t>;
     using managed_int_array = gpu_array::managed_array<int, std::uint32_t>;
 
+    template <typename ValueType, bool Unified>
+    class non_owning_array_view
+        : public gpu_array::detail::memory_kind<Unified>,
+          public gpu_array::detail::array_access_interface<non_owning_array_view<ValueType, Unified>, ValueType,
+                                                           std::uint32_t>,
+          public std::conditional_t<Unified,
+                                    gpu_array::detail::managed_array_conversion_interface<
+                                        non_owning_array_view<ValueType, Unified>, ValueType, std::uint32_t>,
+                                    gpu_array::detail::device_array_conversion_interface<
+                                        non_owning_array_view<ValueType, Unified>, ValueType, std::uint32_t>>
+    {
+        ValueType* data_;
+        std::uint32_t size_;
+
+    public:
+        __host__ __device__ non_owning_array_view(ValueType* data, std::uint32_t size) : data_(data), size_(size) {}
+
+        __host__ __device__ ValueType* data() noexcept { return data_; }
+        __host__ __device__ const ValueType* data() const noexcept { return data_; }
+        __host__ __device__ std::uint32_t size() const noexcept { return size_; }
+    };
+
     template <typename T>
     concept valid_device_array_value = requires { sizeof(gpu_array::array<T>); };
 
@@ -279,6 +301,31 @@ TEST(ArrayCommon, CrossMemoryConversions)
 
     auto managed_double = managed_value.to<gpu_array::managed_array<double, std::uint32_t>>();
     EXPECT_EQ(managed_double.template to<std::vector>(), (std::vector<double>{2.0, 4.0, 6.0}));
+}
+
+TEST(ArrayViewPreparation, ClassifiesDeviceViewsAsGpuRanges)
+{
+    using device_view = non_owning_array_view<int, false>;
+
+    static_assert(gpu_array::detail::gpu_ptr<device_view>);
+    static_assert(gpu_array::detail::gpu_unmanaged_ptr<device_view>);
+    static_assert(!gpu_array::detail::array_convertible<device_view>);
+    static_assert(!gpu_array::detail::array_convertible_for_copy<device_view>);
+    static_assert(!std::constructible_from<device_array, const device_view&>);
+    static_assert(!std::constructible_from<managed_int_array, const device_view&>);
+
+    SUCCEED();
+}
+
+TEST(ArrayViewPreparation, MaterializesNestedManagedViews)
+{
+    const auto expected = std::vector<std::vector<int>>{{1, 2, 3}, {4}, {}, {5, 6}};
+    auto source = gpu_array::managed_array(expected);
+    auto view = non_owning_array_view<gpu_array::managed_array<int>, true>(source.data(), source.size());
+
+    static_assert(gpu_array::detail::gpu_managed_random_access_range<decltype(view)>);
+    static_assert(std::same_as<decltype(view.template to<std::vector>()), std::vector<std::vector<int>>>);
+    EXPECT_EQ(view.template to<std::vector>(), expected);
 }
 
 TEST(ManagedArray, HostAccess)
