@@ -276,6 +276,20 @@ TEST(ManagedStructureOfArraysViewKernel, CreatesSliceFromManagedOwner)
                       {source[0], record{102, 13.5F, 5.5}, record{103, 15.5F, 7.5}, source[3]});
 }
 
+TEST(StructureOfArraysViewKernel, ComposesWithAdaptors)
+{
+    using record = gpu_tuple_record<int, float, double>;
+    const auto source = make_records<record>();
+    auto records = gpu_array::structure_of_arrays<record, std::uint32_t>(source);
+    auto view = records.view(1, 2);
+
+    gpu_array_test::launch_input_range<enumerate_stride_view_kernel<decltype(view)>>({2}, {2}, view);
+    synchronize();
+
+    expect_records_eq(copy_member_arrays<record>(records),
+                      {source[0], source[1], record{13, 6.5F, 6.75}, source[3]});
+}
+
 TEST(ManagedStructureOfArraysKernel, GridThreadStrideView)
 {
     using record = gpu_tuple_record<int, float, double>;

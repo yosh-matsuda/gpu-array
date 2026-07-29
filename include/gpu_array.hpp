@@ -4333,12 +4333,14 @@ template <typename... Ts>
 inline constexpr bool std::ranges::enable_borrowed_range<gpu_array::array<Ts...>> = true;
 template <typename... Ts>
 inline constexpr bool std::ranges::enable_borrowed_range<gpu_array::managed_array<Ts...>> = true;
+#endif
 template <typename ValueType, typename SizeType, bool Unified, bool Const>
 inline constexpr bool std::ranges::enable_borrowed_range<gpu_array::detail::basic_array_view<ValueType, SizeType,
                                                                                                Unified, Const>> = true;
 template <template <typename...> typename Tuple, typename SizeType, bool Unified, bool Const, typename... Ts>
 inline constexpr bool std::ranges::enable_borrowed_range<
     gpu_array::detail::basic_structure_of_arrays_view<Tuple, SizeType, Unified, Const, Ts...>> = true;
+#if defined(GPU_DEVICE_COMPILE)
 template <typename... Ts>
 inline constexpr bool std::ranges::enable_borrowed_range<gpu_array::structure_of_arrays<Ts...>> = true;
 template <typename... Ts>

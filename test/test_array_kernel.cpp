@@ -64,6 +64,15 @@ namespace
         }
     }
 
+    template <typename Range>
+    __global__ void update_grid_thread_stride_view_kernel(Range values, int offset)
+    {
+        for (auto& value : values | gpu_array::views::grid_thread_stride)
+        {
+            value += offset;
+        }
+    }
+
     template <typename SourceArray, typename DestinationArray>
     __global__ void copy_from_const_surface_kernel(const SourceArray source, DestinationArray destination)
     {
@@ -174,6 +183,17 @@ TEST(ManagedArrayViewKernel, CreatesSliceFromOwnerOnDevice)
     synchronize();
 
     expect_vector(values, {0, 20, 21, 22, 23, 0});
+}
+
+TEST(ArrayViewKernel, ComposesWithGridThreadStride)
+{
+    auto values = device_int_array(std::vector<int>{0, 1, 2, 3, 4, 5});
+    auto view = values.view(1, 4);
+
+    update_grid_thread_stride_view_kernel<<<2, 2>>>(view, 10);
+    synchronize();
+
+    expect_vector(values, {0, 11, 12, 13, 14, 5});
 }
 
 TEST(ArrayKernel, UsesDevicePointerAndIteratorSurface)

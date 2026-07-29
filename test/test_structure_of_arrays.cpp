@@ -181,6 +181,9 @@ TEST(StructureOfArrays, RangeTypes)
     using record = gpu_tuple_record<int, float, double>;
     using device_soa = gpu_array::structure_of_arrays<record, std::uint32_t>;
     using managed_soa = gpu_array::managed_structure_of_arrays<record, std::uint32_t>;
+    using device_view = gpu_array::structure_of_arrays_view<record, std::uint32_t>;
+    using managed_view = gpu_array::managed_structure_of_arrays_view<record, std::uint32_t>;
+    using const_managed_view = gpu_array::const_managed_structure_of_arrays_view<record, std::uint32_t>;
     using grid_thread_strided_view = decltype(std::declval<managed_soa&>() | gpu_array::views::grid_thread_stride);
     using enumerate_soa_view = gpu_array::enumerate_view<managed_soa>;
     using zip_soa_view = gpu_array::zip_view<managed_soa, managed_soa>;
@@ -224,6 +227,16 @@ TEST(StructureOfArrays, RangeTypes)
     static_assert(requires(managed_soa& lhs, managed_soa& rhs) {
         gpu_array::views::zip(lhs, rhs) | gpu_array::views::grid_thread_stride;
     });
+    static_assert(requires(managed_view values) {
+        values | gpu_array::views::enumerate | gpu_array::views::grid_thread_stride;
+    });
+    static_assert(requires(device_view lhs, const device_view rhs) {
+        gpu_array::views::zip(lhs, rhs) | gpu_array::views::grid_thread_stride;
+    });
+    static_assert(std::same_as<std::ranges::range_reference_t<decltype(
+                                   std::declval<const_managed_view>() | gpu_array::views::enumerate)>,
+                               gpu_array::tuple<std::uint32_t,
+                                                gpu_tuple_record<const int&, const float&, const double&>>>);
 
     check_soa_range_concepts<device_soa>();
     check_soa_range_concepts<managed_soa>();
@@ -265,8 +278,10 @@ TEST(StructureOfArraysView, PublicContractAndOwnerFactories)
     using const_managed_view = gpu_array::const_managed_structure_of_arrays_view<record, std::uint32_t>;
 
     static_assert(std::ranges::view<device_view>);
+    static_assert(std::ranges::borrowed_range<device_view>);
     static_assert(std::ranges::random_access_range<device_view>);
     static_assert(std::ranges::view<managed_view>);
+    static_assert(std::ranges::borrowed_range<managed_view>);
     static_assert(std::ranges::random_access_range<managed_view>);
     static_assert(std::same_as<std::ranges::range_reference_t<const_device_view>,
                                gpu_tuple_record<const int&, const float&, const double&>>);
@@ -462,6 +477,33 @@ TEST(ManagedStructureOfArrays, ZipViewReferences)
     expect_records_eq(lhs.template to<std::vector>(),
                       std::vector<record>{record{11, 11.5F, 12.5}, record{22, 23.5F, 24.5}, record{33, 35.5F, 36.5},
                                           record{4, 7.5F, 8.5}});
+}
+
+TEST(ManagedStructureOfArraysView, AdaptorIntegration)
+{
+    using record = gpu_tuple_record<int, float, double>;
+    auto values = gpu_array::managed_structure_of_arrays<record, std::uint32_t>(make_records<record>());
+    auto view = values.view(1, 2);
+
+    for (auto&& [index, value] : view | gpu_array::views::enumerate | gpu_array::views::grid_thread_stride)
+    {
+        value.get_a() += static_cast<int>(index) * 10;
+        value.get_b() += static_cast<float>(index);
+        value.get_c() += static_cast<double>(index) * 0.25;
+    }
+
+    const auto updates = gpu_array::managed_structure_of_arrays<record, std::uint32_t>(
+        std::vector<record>{record{100, 10.0F, 1.0}, record{200, 20.0F, 2.0}});
+    for (auto&& [value, update] : gpu_array::views::zip(view, updates.view()))
+    {
+        value.get_a() += update.get_a();
+        value.get_b() += update.get_b();
+        value.get_c() += update.get_c();
+    }
+
+    expect_records_eq(values.template to<std::vector>(),
+                      {record{1, 1.5F, 2.5}, record{102, 13.5F, 5.5}, record{213, 26.5F, 8.75},
+                       record{4, 7.5F, 8.5}});
 }
 
 TEST(ManagedStructureOfArrays, RecursiveMemoryManagement)

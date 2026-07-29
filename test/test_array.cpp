@@ -350,15 +350,19 @@ TEST(ArrayView, PublicRangeAndOwnershipContract)
     using const_managed_view = gpu_array::const_managed_array_view<int, std::uint32_t>;
 
     static_assert(std::ranges::view<device_view>);
+    static_assert(std::ranges::borrowed_range<device_view>);
     static_assert(std::ranges::contiguous_range<device_view>);
     static_assert(std::ranges::output_range<device_view, int>);
     static_assert(std::ranges::view<managed_view>);
+    static_assert(std::ranges::borrowed_range<managed_view>);
     static_assert(std::ranges::contiguous_range<managed_view>);
     static_assert(std::ranges::output_range<managed_view, int>);
     static_assert(std::ranges::view<const_device_view>);
+    static_assert(std::ranges::borrowed_range<const_device_view>);
     static_assert(std::ranges::contiguous_range<const_device_view>);
     static_assert(!std::ranges::output_range<const_device_view, int>);
     static_assert(std::ranges::view<const_managed_view>);
+    static_assert(std::ranges::borrowed_range<const_managed_view>);
     static_assert(std::ranges::contiguous_range<const_managed_view>);
     static_assert(!std::ranges::output_range<const_managed_view, int>);
     static_assert(!gpu_array::detail::gpu_array_ptr<device_view>);
@@ -377,6 +381,40 @@ TEST(ArrayView, PublicRangeAndOwnershipContract)
     copy.back() = 70;
     EXPECT_EQ(values.template to<std::vector>(), (std::vector<int>{2, 30, 5, 70}));
     EXPECT_EQ(view.template to<std::vector>(), (std::vector<int>{2, 30, 5, 70}));
+}
+
+TEST(ArrayView, AdaptorIntegration)
+{
+    using device_view = gpu_array::array_view<int, std::uint32_t>;
+    using managed_view = gpu_array::managed_array_view<int, std::uint32_t>;
+    using const_managed_view = gpu_array::const_managed_array_view<int, std::uint32_t>;
+
+    static_assert(requires(managed_view values) {
+        values | gpu_array::views::enumerate | gpu_array::views::grid_thread_stride;
+    });
+    static_assert(requires(device_view lhs, const device_view rhs) {
+        gpu_array::views::zip(lhs, rhs) | gpu_array::views::grid_thread_stride;
+    });
+    static_assert(std::same_as<std::ranges::range_reference_t<decltype(
+                                   std::declval<const_managed_view>() | gpu_array::views::enumerate)>,
+                               gpu_array::tuple<std::uint32_t, const int&>>);
+
+    auto values = managed_int_array{1, 2, 3, 4};
+    auto view = values.view(1, 2);
+    for (auto&& [index, value] : view | gpu_array::views::enumerate | gpu_array::views::grid_thread_stride)
+    {
+        value += static_cast<int>(index) * 10;
+    }
+
+    const auto& const_values = values;
+    auto updates = managed_int_array{100, 200};
+    for (auto&& [value, update] : gpu_array::views::zip(view, updates.view()))
+    {
+        value += update;
+    }
+
+    EXPECT_EQ(values.template to<std::vector>(), (std::vector<int>{1, 102, 213, 4}));
+    EXPECT_EQ(const_values.view(1, 2).template to<std::vector>(), (std::vector<int>{102, 213}));
 }
 
 TEST(ArrayView, ValidatesMemoryKind)
