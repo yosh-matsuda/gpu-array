@@ -43,12 +43,6 @@
 
 #include <cassert>
 
-#if defined(GPU_DEVICE_COMPILE) || !defined(__NVCC__)
-#define SIGSEGV_DEPRECATED
-#else
-#define SIGSEGV_DEPRECATED [[deprecated("Cannot access GPU memory directly")]]
-#endif
-
 namespace gpu_array
 {
     // Custom implementation of tuple for device code
@@ -632,6 +626,61 @@ namespace gpu_array
 #endif
         };
 
+        template <class Derived, typename ValueType, typename SizeType>
+        class array_access_interface
+        {
+            __host__ __device__ Derived& derived() noexcept { return static_cast<Derived&>(*this); }
+            __host__ __device__ const Derived& derived() const noexcept { return static_cast<const Derived&>(*this); }
+
+        public:
+            using size_type = SizeType;
+            using value_type = ValueType;
+            using reference = value_type&;
+            using const_reference = const value_type&;
+            using iterator = value_type*;
+            using const_iterator = const value_type*;
+            using pointer = value_type*;
+            using const_pointer = const value_type*;
+
+            __host__ __device__ const_reference operator[](size_type i) const noexcept { return derived().data()[i]; }
+            __host__ __device__ reference operator[](size_type i) noexcept { return derived().data()[i]; }
+            __host__ __device__ iterator begin() noexcept { return derived().data(); }
+            __host__ __device__ iterator end() noexcept { return derived().data() + derived().size(); }
+            __host__ __device__ std::reverse_iterator<iterator> rbegin() noexcept
+            {
+                return std::reverse_iterator<iterator>(end());
+            }
+            __host__ __device__ std::reverse_iterator<iterator> rend() noexcept
+            {
+                return std::reverse_iterator<iterator>(begin());
+            }
+            __host__ __device__ const_iterator begin() const noexcept { return derived().data(); }
+            __host__ __device__ const_iterator end() const noexcept { return derived().data() + derived().size(); }
+            __host__ __device__ std::reverse_iterator<const_iterator> rbegin() const noexcept
+            {
+                return std::reverse_iterator<const_iterator>(end());
+            }
+            __host__ __device__ std::reverse_iterator<const_iterator> rend() const noexcept
+            {
+                return std::reverse_iterator<const_iterator>(begin());
+            }
+            __host__ __device__ const_iterator cbegin() const noexcept { return begin(); }
+            __host__ __device__ const_iterator cend() const noexcept { return end(); }
+            __host__ __device__ std::reverse_iterator<const_iterator> crbegin() const noexcept
+            {
+                return std::reverse_iterator<const_iterator>(cend());
+            }
+            __host__ __device__ std::reverse_iterator<const_iterator> crend() const noexcept
+            {
+                return std::reverse_iterator<const_iterator>(cbegin());
+            }
+            __host__ __device__ reference front() noexcept { return *begin(); }
+            __host__ __device__ const_reference front() const noexcept { return *begin(); }
+            __host__ __device__ reference back() noexcept { return *(end() - 1); }
+            __host__ __device__ const_reference back() const noexcept { return *(end() - 1); }
+            __host__ __device__ explicit operator bool() const noexcept { return derived().data() != nullptr; }
+        };
+
         template <bool Unified, typename SizeType, typename... ValueType>
         constexpr void is_ptr_helper(const detail::owning_storage<Unified, SizeType, ValueType...>&)
         {
@@ -746,62 +795,20 @@ namespace gpu_array
 
     template <typename ValueType, typename SizeType>
     requires std::is_trivially_copyable_v<ValueType>
-    class array : public detail::owning_storage<false, SizeType, ValueType>
+    class array : public detail::owning_storage<false, SizeType, ValueType>,
+                  public detail::array_access_interface<array<ValueType, SizeType>, ValueType, SizeType>
     {
         using base = detail::owning_storage<false, SizeType, ValueType>;
 
     public:
-        using size_type = SizeType;
-        using value_type = ValueType;
-        using reference = value_type&;
-        using const_reference = const value_type&;
-        using iterator = value_type*;
-        using const_iterator = const value_type*;
-        using pointer = value_type*;
-        using const_pointer = const value_type*;
+        using access = detail::array_access_interface<array<ValueType, SizeType>, ValueType, SizeType>;
+        using typename access::const_pointer;
+        using typename access::const_reference;
+        using typename access::pointer;
+        using typename access::reference;
+        using typename access::size_type;
+        using typename access::value_type;
 
-        SIGSEGV_DEPRECATED __host__ __device__ const_reference operator[](size_type i) const noexcept
-        {
-            return data()[i];
-        };
-        SIGSEGV_DEPRECATED __host__ __device__ reference operator[](size_type i) noexcept { return data()[i]; }
-        SIGSEGV_DEPRECATED __host__ __device__ iterator begin() noexcept { return data(); }
-        SIGSEGV_DEPRECATED __host__ __device__ iterator end() noexcept { return data() + base::size_; }
-        SIGSEGV_DEPRECATED __host__ __device__ std::reverse_iterator<iterator> rbegin() noexcept
-        {
-            return std::reverse_iterator<iterator>(end());
-        }
-        SIGSEGV_DEPRECATED __host__ __device__ std::reverse_iterator<iterator> rend() noexcept
-        {
-            return std::reverse_iterator<iterator>(begin());
-        }
-        SIGSEGV_DEPRECATED __host__ __device__ const_iterator begin() const noexcept { return data(); }
-        SIGSEGV_DEPRECATED __host__ __device__ const_iterator end() const noexcept { return data() + base::size_; }
-        SIGSEGV_DEPRECATED __host__ __device__ std::reverse_iterator<const_iterator> rbegin() const noexcept
-        {
-            return std::reverse_iterator<const_iterator>(end());
-        }
-        SIGSEGV_DEPRECATED __host__ __device__ std::reverse_iterator<const_iterator> rend() const noexcept
-        {
-            return std::reverse_iterator<const_iterator>(begin());
-        }
-        SIGSEGV_DEPRECATED __host__ __device__ const_iterator cbegin() const noexcept { return data(); }
-        SIGSEGV_DEPRECATED __host__ __device__ const_iterator cend() const noexcept { return data() + base::size_; }
-        SIGSEGV_DEPRECATED __host__ __device__ std::reverse_iterator<const_iterator> crbegin() const noexcept
-        {
-            return std::reverse_iterator<const_iterator>(cend());
-        }
-        SIGSEGV_DEPRECATED __host__ __device__ std::reverse_iterator<const_iterator> crend() const noexcept
-        {
-            return std::reverse_iterator<const_iterator>(cbegin());
-        }
-        SIGSEGV_DEPRECATED __host__ __device__ reference front() noexcept { return *begin(); }
-        SIGSEGV_DEPRECATED __host__ __device__ const_reference front() const noexcept { return *begin(); }
-        SIGSEGV_DEPRECATED __host__ __device__ reference back() noexcept { return *(data() + base::size_ - 1); }
-        SIGSEGV_DEPRECATED __host__ __device__ const_reference back() const noexcept
-        {
-            return *(data() + base::size_ - 1);
-        }
         __host__ __device__ pointer data() noexcept { return gpu_array::get<0>(base::data_); }
         __host__ __device__ const_pointer data() const noexcept { return gpu_array::get<0>(base::data_); }
 
@@ -1109,12 +1116,11 @@ namespace gpu_array
             base::free();
 #endif
         }
-
-        __host__ __device__ explicit operator bool() const noexcept { return data() != nullptr; }
     };
 
     template <typename ValueType, typename SizeType>
-    class managed_array : public detail::owning_storage<true, SizeType, ValueType>
+    class managed_array : public detail::owning_storage<true, SizeType, ValueType>,
+                          public detail::array_access_interface<managed_array<ValueType, SizeType>, ValueType, SizeType>
     {
         using base = detail::owning_storage<true, SizeType, ValueType>;
         static constexpr auto has_prefetch =
@@ -1142,51 +1148,14 @@ namespace gpu_array
         }
 
     public:
-        using size_type = SizeType;
-        using value_type = ValueType;
-        using reference = value_type&;
-        using const_reference = const value_type&;
-        using iterator = value_type*;
-        using const_iterator = const value_type*;
-        using pointer = value_type*;
-        using const_pointer = const value_type*;
+        using access = detail::array_access_interface<managed_array<ValueType, SizeType>, ValueType, SizeType>;
+        using typename access::const_pointer;
+        using typename access::const_reference;
+        using typename access::pointer;
+        using typename access::reference;
+        using typename access::size_type;
+        using typename access::value_type;
 
-        __host__ __device__ const_reference operator[](size_type i) const noexcept { return data()[i]; };
-        __host__ __device__ reference operator[](size_type i) noexcept { return data()[i]; }
-        __host__ __device__ iterator begin() noexcept { return data(); }
-        __host__ __device__ iterator end() noexcept { return data() + base::size_; }
-        __host__ __device__ std::reverse_iterator<iterator> rbegin() noexcept
-        {
-            return std::reverse_iterator<iterator>(end());
-        }
-        __host__ __device__ std::reverse_iterator<iterator> rend() noexcept
-        {
-            return std::reverse_iterator<iterator>(begin());
-        }
-        __host__ __device__ const_iterator begin() const noexcept { return data(); }
-        __host__ __device__ const_iterator end() const noexcept { return data() + base::size_; }
-        __host__ __device__ std::reverse_iterator<const_iterator> rbegin() const noexcept
-        {
-            return std::reverse_iterator<const_iterator>(end());
-        }
-        __host__ __device__ std::reverse_iterator<const_iterator> rend() const noexcept
-        {
-            return std::reverse_iterator<const_iterator>(begin());
-        }
-        __host__ __device__ const_iterator cbegin() const noexcept { return data(); }
-        __host__ __device__ const_iterator cend() const noexcept { return data() + base::size_; }
-        __host__ __device__ std::reverse_iterator<const_iterator> crbegin() const noexcept
-        {
-            return std::reverse_iterator<const_iterator>(cend());
-        }
-        __host__ __device__ std::reverse_iterator<const_iterator> crend() const noexcept
-        {
-            return std::reverse_iterator<const_iterator>(cbegin());
-        }
-        __host__ __device__ reference front() noexcept { return *begin(); }
-        __host__ __device__ const_reference front() const noexcept { return *begin(); }
-        __host__ __device__ reference back() noexcept { return *(data() + base::size_ - 1); }
-        __host__ __device__ const_reference back() const noexcept { return *(data() + base::size_ - 1); }
         __host__ __device__ pointer data() noexcept { return gpu_array::get<0>(base::data_); }
         __host__ __device__ const_pointer data() const noexcept { return gpu_array::get<0>(base::data_); }
 
@@ -1469,8 +1438,6 @@ namespace gpu_array
             base::free();
 #endif
         }
-
-        __host__ __device__ explicit operator bool() const noexcept { return data() != nullptr; }
     };
 
     // deduction guide for arrays
@@ -1938,6 +1905,81 @@ namespace gpu_array
         }
     };
 
+    namespace detail
+    {
+        template <class Derived, template <typename...> typename Tuple, typename SizeType, typename... Ts>
+        class soa_access_interface
+        {
+            __host__ __device__ Derived& derived() noexcept { return static_cast<Derived&>(*this); }
+            __host__ __device__ const Derived& derived() const noexcept { return static_cast<const Derived&>(*this); }
+
+        public:
+            using size_type = SizeType;
+            using value_type = Tuple<Ts...>;
+            using reference = Tuple<Ts&...>;
+            using const_reference = Tuple<const Ts&...>;
+            using iterator = structure_of_arrays_iterator<Tuple, Ts...>;
+            using const_iterator = structure_of_arrays_iterator<Tuple, const Ts...>;
+
+            __host__ __device__ iterator begin() noexcept
+            {
+                return iterator(pointer_tuple(derived(), std::index_sequence_for<Ts...>{}));
+            }
+            __host__ __device__ iterator end() noexcept
+            {
+                return iterator(pointer_tuple(derived(), derived().size(), std::index_sequence_for<Ts...>{}));
+            }
+            __host__ __device__ const_iterator begin() const noexcept
+            {
+                return const_iterator(pointer_tuple(derived(), std::index_sequence_for<Ts...>{}));
+            }
+            __host__ __device__ const_iterator end() const noexcept
+            {
+                return const_iterator(pointer_tuple(derived(), derived().size(), std::index_sequence_for<Ts...>{}));
+            }
+            __host__ __device__ reference operator[](size_type i) &
+            {
+                assert(i < derived().size());
+                return element_reference(derived(), i, std::index_sequence_for<Ts...>{});
+            }
+            __host__ __device__ const_reference operator[](size_type i) const&
+            {
+                assert(i < derived().size());
+                return element_reference(derived(), i, std::index_sequence_for<Ts...>{});
+            }
+            __host__ __device__ value_type operator[](size_type i) &&
+            {
+                assert(i < derived().size());
+                return element_value(derived(), i, std::index_sequence_for<Ts...>{});
+            }
+
+        private:
+            template <class Self, std::size_t... Ns>
+            __host__ __device__ static auto pointer_tuple(Self& self, std::index_sequence<Ns...>)
+            {
+                return gpu_array::tuple{self.template data<Ns>()...};
+            }
+            template <class Self, std::size_t... Ns>
+            __host__ __device__ static auto pointer_tuple(Self& self, size_type offset, std::index_sequence<Ns...>)
+            {
+                return gpu_array::tuple{(self.template data<Ns>() + offset)...};
+            }
+            template <class Self, std::size_t... Ns>
+            __host__ __device__ static decltype(auto) element_reference(Self& self, size_type index,
+                                                                        std::index_sequence<Ns...>)
+            {
+                using result_type = std::conditional_t<std::is_const_v<Self>, const_reference, reference>;
+                return result_type{self.template data<Ns>()[index]...};
+            }
+
+            template <class Self, std::size_t... Ns>
+            __host__ __device__ static value_type element_value(Self& self, size_type index, std::index_sequence<Ns...>)
+            {
+                return value_type{self.template data<Ns>()[index]...};
+            }
+        };
+    }  // namespace detail
+
     template <typename... Ts>
     class structure_of_arrays : public structure_of_arrays<gpu_array::tuple<Ts...>, size_type_default>
     {
@@ -1966,9 +2008,11 @@ namespace gpu_array
 
     template <template <typename...> typename Tuple, typename... Ts, typename SizeType>
     requires (sizeof...(Ts) > 0) && std::constructible_from<Tuple<Ts...>, const Ts&...> &&
-             std::constructible_from<Tuple<Ts&...>, Ts&...> &&
-             std::constructible_from<Tuple<const Ts&...>, const Ts&...> && (std::is_trivially_copyable_v<Ts> && ...)
-    class structure_of_arrays<Tuple<Ts...>, SizeType> : public detail::owning_storage<false, SizeType, Ts...>
+                 std::constructible_from<Tuple<Ts&...>, Ts&...> &&
+                 std::constructible_from<Tuple<const Ts&...>, const Ts&...> && (std::is_trivially_copyable_v<Ts> && ...)
+    class structure_of_arrays<Tuple<Ts...>, SizeType>
+        : public detail::owning_storage<false, SizeType, Ts...>,
+          public detail::soa_access_interface<structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType, Ts...>
     {
         static constexpr auto num_arrays = sizeof...(Ts);
         using base = detail::owning_storage<false, SizeType, Ts...>;
@@ -1983,47 +2027,12 @@ namespace gpu_array
         using const_iterator_type = structure_of_arrays_iterator<Tuple, const Ts...>;
 
     public:
-        using size_type = SizeType;
+        using access =
+            detail::soa_access_interface<structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType, Ts...>;
+        using typename access::size_type;
         template <std::size_t N>
         using element_type = std::tuple_element_t<N, tuple_value_type>;
 
-        SIGSEGV_DEPRECATED __host__ __device__ auto begin() noexcept { return iterator_type(base::data_); }
-        SIGSEGV_DEPRECATED __host__ __device__ auto end() noexcept
-        {
-            return gpu_array::apply(
-                [this](auto&... ptrs) { return iterator_type(tuple_pointer_type{(ptrs + base::size_)...}); },
-                base::data_);
-        }
-        SIGSEGV_DEPRECATED __host__ __device__ auto begin() const noexcept
-        {
-            return gpu_array::apply(
-                [](auto&... ptrs) { return const_iterator_type(tuple_const_pointer_type{(ptrs)...}); }, base::data_);
-        }
-        SIGSEGV_DEPRECATED __host__ __device__ auto end() const noexcept
-        {
-            return gpu_array::apply(
-                [this](auto&... ptrs) {
-                    return const_iterator_type(tuple_const_pointer_type{(ptrs + base::size_)...});
-                },
-                base::data_);
-        }
-        SIGSEGV_DEPRECATED __host__ __device__ auto operator[](size_type i) &
-        {
-            assert(i < base::size_);
-            return gpu_array::apply([i](auto&... ptrs) { return ret_tuple_reference_type{*(ptrs + i)...}; },
-                                    base::data_);
-        }
-        SIGSEGV_DEPRECATED __host__ __device__ auto operator[](size_type i) const&
-        {
-            assert(i < base::size_);
-            return gpu_array::apply([i](auto&... ptrs) { return ret_tuple_const_reference_type{*(ptrs + i)...}; },
-                                    base::data_);
-        }
-        SIGSEGV_DEPRECATED __host__ __device__ auto operator[](size_type i) &&
-        {
-            assert(i < base::size_);
-            return gpu_array::apply([i](auto&... ptrs) { return ret_tuple_value_type{*(ptrs + i)...}; }, base::data_);
-        }
         template <std::size_t N>
         __host__ __device__ auto* data() noexcept
         {
@@ -2307,9 +2316,12 @@ namespace gpu_array
 
     template <template <typename...> typename Tuple, typename... Ts, typename SizeType>
     requires (sizeof...(Ts) > 0) && std::constructible_from<Tuple<Ts...>, const Ts&...> &&
-             std::constructible_from<Tuple<Ts&...>, Ts&...> &&
-             std::constructible_from<Tuple<const Ts&...>, const Ts&...>
-    class managed_structure_of_arrays<Tuple<Ts...>, SizeType> : public detail::owning_storage<true, SizeType, Ts...>
+                 std::constructible_from<Tuple<Ts&...>, Ts&...> &&
+                 std::constructible_from<Tuple<const Ts&...>, const Ts&...>
+    class managed_structure_of_arrays<Tuple<Ts...>, SizeType>
+        : public detail::owning_storage<true, SizeType, Ts...>,
+          public detail::soa_access_interface<managed_structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType,
+                                              Ts...>
     {
         static constexpr auto num_arrays = sizeof...(Ts);
         using base = detail::owning_storage<true, SizeType, Ts...>;
@@ -2358,47 +2370,12 @@ namespace gpu_array
         }
 
     public:
-        using size_type = SizeType;
+        using access =
+            detail::soa_access_interface<managed_structure_of_arrays<Tuple<Ts...>, SizeType>, Tuple, SizeType, Ts...>;
+        using typename access::size_type;
         template <std::size_t N>
         using element_type = std::tuple_element_t<N, tuple_value_type>;
 
-        __host__ __device__ auto begin() noexcept { return iterator_type(base::data_); }
-        __host__ __device__ auto end() noexcept
-        {
-            return gpu_array::apply(
-                [this](auto&... ptrs) { return iterator_type(tuple_pointer_type{(ptrs + base::size_)...}); },
-                base::data_);
-        }
-        __host__ __device__ auto begin() const noexcept
-        {
-            return gpu_array::apply(
-                [](auto&... ptrs) { return const_iterator_type(tuple_const_pointer_type{(ptrs)...}); }, base::data_);
-        }
-        __host__ __device__ auto end() const noexcept
-        {
-            return gpu_array::apply(
-                [this](auto&... ptrs) {
-                    return const_iterator_type(tuple_const_pointer_type{(ptrs + base::size_)...});
-                },
-                base::data_);
-        }
-        __host__ __device__ auto operator[](size_type i) &
-        {
-            assert(i < base::size_);
-            return gpu_array::apply([i](auto&... ptrs) { return ret_tuple_reference_type{*(ptrs + i)...}; },
-                                    base::data_);
-        }
-        __host__ __device__ auto operator[](size_type i) const&
-        {
-            assert(i < base::size_);
-            return gpu_array::apply([i](auto&... ptrs) { return ret_tuple_const_reference_type{*(ptrs + i)...}; },
-                                    base::data_);
-        }
-        __host__ __device__ auto operator[](size_type i) &&
-        {
-            assert(i < base::size_);
-            return gpu_array::apply([i](auto&... ptrs) { return ret_tuple_value_type{*(ptrs + i)...}; }, base::data_);
-        }
         template <std::size_t N>
         __host__ __device__ auto* data() noexcept
         {
@@ -3912,7 +3889,6 @@ inline constexpr bool std::ranges::enable_view<gpu_array::enumerate_view<Range>>
 template <gpu_array::detail::RandomAccessRange... Ranges>
 inline constexpr bool std::ranges::enable_view<gpu_array::zip_view<Ranges...>> = true;
 
-#undef SIGSEGV_DEPRECATED
 #undef INCR_GPU_MEMORY_USAGE
 #undef DECR_GPU_MEMORY_USAGE
 #undef MEMORY_USAGE_EQ
