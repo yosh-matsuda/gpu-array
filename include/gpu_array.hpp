@@ -25,6 +25,7 @@
 #include <ranges>
 #include <tuple>
 #include <type_traits>
+#include <utility>
 
 #if !defined(GPU_DEVICE_COMPILE)
 #include <iostream>
@@ -1618,23 +1619,35 @@ namespace gpu_array
         {
             return const_managed_array_view<value_type, size_type>(data(), base::size(), detail::validated_view_tag{});
         }
-        __host__ __device__ managed_array_view<value_type, size_type> view(size_type offset, size_type count) & noexcept
+        // A subrange can carry a size type of its own. An array that needs a 64 bit index still
+        // gives out a view that fits in 32 bits. The default keeps the size type of the array.
+        template <typename ViewSizeType = size_type>
+        __host__ __device__ managed_array_view<value_type, ViewSizeType> view(size_type offset,
+                                                                              size_type count) & noexcept
         {
             assert(offset <= base::size() && count <= base::size() - offset);
-            return managed_array_view<value_type, size_type>(data() == nullptr ? nullptr : data() + offset, count,
-                                                             detail::validated_view_tag{});
+            assert(std::in_range<ViewSizeType>(count));
+            return managed_array_view<value_type, ViewSizeType>(data() == nullptr ? nullptr : data() + offset,
+                                                                static_cast<ViewSizeType>(count),
+                                                                detail::validated_view_tag{});
         }
-        __host__ __device__ const_managed_array_view<value_type, size_type> view(size_type offset,
-                                                                                 size_type count) const& noexcept
+        template <typename ViewSizeType = size_type>
+        __host__ __device__ const_managed_array_view<value_type, ViewSizeType> view(size_type offset,
+                                                                                    size_type count) const& noexcept
         {
             assert(offset <= base::size() && count <= base::size() - offset);
-            return const_managed_array_view<value_type, size_type>(data() == nullptr ? nullptr : data() + offset, count,
-                                                                   detail::validated_view_tag{});
+            assert(std::in_range<ViewSizeType>(count));
+            return const_managed_array_view<value_type, ViewSizeType>(data() == nullptr ? nullptr : data() + offset,
+                                                                      static_cast<ViewSizeType>(count),
+                                                                      detail::validated_view_tag{});
         }
         __host__ __device__ managed_array_view<value_type, size_type> view() && = delete;
         __host__ __device__ const_managed_array_view<value_type, size_type> view() const&& = delete;
-        __host__ __device__ managed_array_view<value_type, size_type> view(size_type, size_type) && = delete;
-        __host__ __device__ const_managed_array_view<value_type, size_type> view(size_type, size_type) const&& = delete;
+        template <typename ViewSizeType = size_type>
+        __host__ __device__ managed_array_view<value_type, ViewSizeType> view(size_type, size_type) && = delete;
+        template <typename ViewSizeType = size_type>
+        __host__ __device__ const_managed_array_view<value_type, ViewSizeType> view(size_type,
+                                                                                    size_type) const&& = delete;
 
         managed_array() = default;
         __host__ __device__ managed_array(const managed_array& r) : base(r) {}
