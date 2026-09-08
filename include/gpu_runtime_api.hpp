@@ -107,6 +107,7 @@ namespace gpu_array::api
 #endif
     }
     __host__ inline decltype(auto) gpuDeviceSynchronize() { return ::hipDeviceSynchronize(); }
+    __host__ inline decltype(auto) gpuDeviceReset() { return ::hipDeviceReset(); }
     __host__ inline decltype(auto) gpuGetDeviceCount(int* count) { return ::hipGetDeviceCount(count); }
     __host__ inline decltype(auto) gpuGetDevice(int* device) { return ::hipGetDevice(device); }
     __host__ inline decltype(auto) gpuStreamCreate(gpuStream_t* stream) { return ::hipStreamCreate(stream); }
@@ -207,6 +208,7 @@ namespace gpu_array::api
 #endif
     }
     __host__ inline decltype(auto) gpuDeviceSynchronize() { return ::cudaDeviceSynchronize(); }
+    __host__ inline decltype(auto) gpuDeviceReset() { return ::cudaDeviceReset(); }
     __host__ inline decltype(auto) gpuGetDeviceCount(int* count) { return ::cudaGetDeviceCount(count); }
     __host__ inline decltype(auto) gpuGetDevice(int* device) { return ::cudaGetDevice(device); }
     __host__ inline decltype(auto) gpuStreamCreate(gpuStream_t* stream) { return ::cudaStreamCreate(stream); }
